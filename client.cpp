@@ -174,6 +174,8 @@ int getIDFromPath(string PATH, int position);
 
 bool isInPath(int id, string PATH);
 
+string addMyIDToPath(string PATH);
+
 int main(int argc, char *argv[]) {
     if (argc != 3) {
         cerr << "Wrong number of arguments! \nUsage: ./node <ID> <cfg file>" << endl;
@@ -353,7 +355,7 @@ void recieving(int writeFD) {
                 break;
             }
         }
-        parseMessage(message, newSockFD);
+        parseMessage(message, newSockFD, writeFD);
 
     }
 }
@@ -361,7 +363,7 @@ void recieving(int writeFD) {
 /**
  * Decides what to do by the header of the message.
  */
-void parseMessage(string message, int fileDescriptor) {
+void parseMessage(string message, int fileDescriptor, int pipeDescriptor) {
     string header[4];
     string text;
     int currChar = 0;
@@ -392,12 +394,28 @@ void parseMessage(string message, int fileDescriptor) {
                 cout << text;
             } else {
                 //This message was not for me... Hubbing it
+                //Adding my ID to its PATH:
+                header[HEADER_PATH] = addMyIDToPath(header[HEADER_PATH]);
+
+                string index = "";
                 for (int i = 0; i < connectionCount; ++i) {
                     if (!isInPath(connections[i].id, header[HEADER_PATH])) {
-
+                        //Fill string of messages:
+                        index.append(to_string(i)).append(";");
                     }
                 }
+                //  We sent a string which looks like this:
+                //  1;4;23;15;
+                write(pipeDescriptor, index.c_str(), index.length() + 1);
+
+                string newDocument = "";
+                newDocument.append(header[HEADER_TYPE]).append(" ").append(header[HEADER_ID]).append(" ").
+                        append(header[HEADER_PATH]).append(" ").append(header[HEADER_TARGET]).append(" ");
+                newDocument.append(text);
+                write(pipeDescriptor, newDocument.c_str(), newDocument.length() + 1);
             }
+
+            //Should be finished...
             break;
         case DELIVERED:
 
@@ -420,6 +438,10 @@ void parseMessage(string message, int fileDescriptor) {
     }
 
 
+}
+
+string addMyIDToPath(string PATH) {
+    return PATH.append(";").append(to_string(localID));
 }
 
 /**
