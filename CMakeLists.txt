@@ -9,3 +9,4 @@ set(SOURCE_FILES_CFG_TEST test_cfg_parser.c route_cfg_parser.h route_cfg_parser.
 add_executable(test_cfg_parser ${SOURCE_FILES_CFG_TEST})
 set(SOURCE_FILES_TEST_PIPES testPipes.cpp)
 add_executable(test_pipes ${SOURCE_FILES_TEST_PIPES})
+add_executable(test_functions testFunctions.cpp)

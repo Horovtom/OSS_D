@@ -46,12 +46,14 @@
 #include <netinet/in.h>
 #include <stdlib.h>
 #include <strings.h>
+#include <string>
 #include <unistd.h>
 #include <vector>
 #include <bits/signum.h>
 #include <signal.h>
 #include "route_cfg_parser.h"
 #include <sys/wait.h>
+#include <time.h>
 
 /**
  * Message to some TARGET
@@ -139,7 +141,7 @@ void sigusr1Handler(int signalNum) {
     int returnVal = 0;
     if (kill(pid1, SIGUSR1) != 0) returnVal = -1;
     wait(NULL);
-    if (kill(pid2, SIGUSR1)!= 0) returnVal = -1;
+    if (kill(pid2, SIGUSR1) != 0) returnVal = -1;
     wait(NULL);
     exit(returnVal);
 }
@@ -168,12 +170,14 @@ void sendReceived(int fileDescriptor);
 
 int generateMessageID();
 
+string getIDFromPath(string PATH, int position);
+
 int main(int argc, char *argv[]) {
     if (argc != 3) {
         cerr << "Wrong number of arguments! \nUsage: ./node <ID> <cfg file>" << endl;
         return -1;
     }
-    localID= atoi(argv[1]);
+    localID = atoi(argv[1]);
     if (localID == 0) {
         cerr << "Invalid ID: " << argv[1] << endl;
         exit(-1);
@@ -188,7 +192,7 @@ int main(int argc, char *argv[]) {
         if (connectionCount > 0) {
             for (int i = 0; i < connectionCount; ++i) {
                 cout << "Connection to the node " << connections[i].id << " at " <<
-                     connections[i].ip_address << (connections[i].ip_address[0] ? ":":"port ") <<
+                     connections[i].ip_address << (connections[i].ip_address[0] ? ":" : "port ") <<
                      connections[i].port << endl;
             }
         } else {
@@ -198,16 +202,16 @@ int main(int argc, char *argv[]) {
         cerr << "Error parsing file!" << endl;
         exit(-1);
     }
-    cout << "Starting client with ID " << argv[1]  << endl;
+    cout << "Starting client with ID " << argv[1] << endl;
 
     sockFD = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sockFD < 0 ) {
+    if (sockFD < 0) {
         cerr << "Error opening socket.. " << endl;
         exit(-1);
     }
     bzero((char *) &serv_addr, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
-    serv_addr.sin_addr.s_addr =INADDR_ANY;
+    serv_addr.sin_addr.s_addr = INADDR_ANY;
     serv_addr.sin_port = htons((uint16_t) localPort);
 
     //This might not work with fork...
@@ -262,7 +266,6 @@ int main(int argc, char *argv[]) {
     return 0;
 
 
-
 }
 
 void startForking() {
@@ -274,10 +277,10 @@ void startForking() {
     }
 
     pid1 = fork();
-    if (pid1 < 0 ){
+    if (pid1 < 0) {
         cerr << "Error forking! " << endl;
         exit(-1);
-    } else if (pid1 == 0 ){
+    } else if (pid1 == 0) {
         //RECV code:
         close(pipeFD[READ_END]);
         //Registering signal that terminates the whole app
@@ -334,14 +337,14 @@ void recieving(int writeFD) {
     int newSockFD = -1;
     listen(sockFD, 5);
     socklen_t clilen = sizeof(cli_addr);
-    while(1) {
-        newSockFD = accept(sockFD, (struct sockaddr*) &cli_addr, &clilen);
+    while (1) {
+        newSockFD = accept(sockFD, (struct sockaddr *) &cli_addr, &clilen);
         if (newSockFD < 0) {
             cerr << "Error on accept... " << endl;
         }
         string message;
         char ch;
-        while(read(newSockFD, &ch, 1) > 0) {
+        while (read(newSockFD, &ch, 1) > 0) {
             if (ch != 0) message.push_back(ch);
             else {
                 message.push_back('\n');
@@ -361,13 +364,13 @@ void parseMessage(string message, int fileDescriptor) {
     string text;
     int currChar = 0;
     for (int i = 0; i < 4; ++i) {
-        while(message[currChar] != ' ') {
+        while (message[currChar] != ' ') {
             header[i].push_back(message[currChar]);
             currChar++;
         }
     }
-    while(message[currChar] == ' ') currChar++;
-    while(currChar < message.length()) text.push_back(message[currChar]);
+    while (message[currChar] == ' ') currChar++;
+    while (currChar < message.length()) text.push_back(message[currChar]);
     //Loaded:
 
     //If this message had already been here
@@ -377,9 +380,13 @@ void parseMessage(string message, int fileDescriptor) {
     //Add it to the list of messages
     listOfMessages.push_back(atoi(header[HEADER_ID].c_str()));
 
-    switch(atoi(header[HEADER_TYPE].c_str())) {
+    switch (atoi(header[HEADER_TYPE].c_str())) {
         case MSG:
             sendReceived(fileDescriptor);
+            if (atoi(header[HEADER_TARGET]) == localID) {
+                //This message was for me... Print it to cout
+                string from = getIDFromPath(header[HEADER_PATH], 0);
+            }
             break;
         case DELIVERED:
 
@@ -405,6 +412,32 @@ void parseMessage(string message, int fileDescriptor) {
 }
 
 /**
+ * Gets ID writeen in PATH on position.
+ */
+string getIDFromPath(string PATH, int position) {
+    string ID = "";
+    int i = 0;
+    for (int j = 0; j < position + 1; ++j) {
+
+        ID = "";
+        while (i < PATH.length() && PATH[i] != ';') {
+            ID.push_back(PATH[i]);
+            i++;
+            if (i > PATH.length()) {
+                return NULL;
+            } else if (i == PATH.length()) {
+                break;
+            }
+        }
+        i++;
+
+    }
+
+    return ID;
+
+}
+
+/**
  * Sends received message back to neighbour
  */
 void sendReceived(int fileDescriptor) {
@@ -418,9 +451,13 @@ void sendReceived(int fileDescriptor) {
     write(fileDescriptor, receivedMessage.c_str(), receivedMessage.length());
 }
 
+
 int generateMessageID() {
-    //TODO:COMPLETE
-    return <#initializer#>;
+    time_t currTime;
+    time(&currTime);
+
+    //TODO: Make this more complex maybe
+    return (int) currTime;
 }
 
 /**
