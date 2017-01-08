@@ -1,10 +1,128 @@
 #include <iostream>
 #include <netinet/in.h>
 #include <stdlib.h>
+#include <strings.h>
+#include <unistd.h>
+#include <vector>
+#include <bits/signum.h>
+#include <signal.h>
 #include "route_cfg_parser.h"
+#include <sys/wait.h>
+
+#define MSG 0
+#define RECEIVED 1
+#define DELIVERED 2
+#define UNREACHABLE 3
+#define DELIVERED_BROKEN 4
+#define UNREACHABLE_BROKEN 5
+#define MAX_MESSAGE_LEN 1024
+#define READ_END 0
+#define WRITE_END 1
+/**
+ * This variable stores all the IDs of messages that went through this node.
+ */
+std::vector<int> listOfMessages;
+/**
+ * This variable stores pid of child...
+ */
+
+/**
+ * PID of INPUT section that handles user-input
+ */
+int pid0;
+/**
+ * PID of RECV section which handles incoming messages
+ */
+int pid1;
+/**
+ * PID of SEND section, which handles outgoing messages
+ */
+int pid2;
+
+/**
+ * This is here in order to terminate the whole app from INPUT part
+ */
+void sigusr1Handler(int signalNum) {
+    cerr << "Terminated..." << endl;
+    int returnVal;
+    wait(&returnVal);
+    exit(returnVal);
+}
+
+/**
+ * This is here for SEND and RECV parts of app to terminate app on error
+ */
+void sigusr2Handler(int signalNum) {
+    cerr << "Im about to terminate app.." << endl;
+    //TODO:COMPLETE
+}
+
+void communicate(int sockfd);
 
 using namespace std;
 int main(int argc, char *argv[]) {
+
+    pid0 = ::getpid();
+    int pipeFD[2];
+    if (pipe(pipeFD) < 0) {
+        cerr << "Error creating pipe!" << endl;
+        exit(-1);
+    }
+
+    pid1 = fork();
+    if (pid1 < 0 ){
+        cerr << "Error forking! " << endl;
+        exit(-1);
+    } else if (pid1 == 0 ){
+        //RECV code:
+        close(pipeFD[READ_END]);
+        //Registering signal that terminates the whole app
+        signal(SIGUSR1, sigusr1Handler);
+
+        recieving(pipeFD[WRITE_END]);
+
+        //Terminate this... (Unreachable)
+        close(pipeFD[WRITE_END]);
+        cerr << "RECV app terminating.. " << endl;
+        exit(EXIT_SUCCESS);
+    } else {
+        pid2 = fork();
+        if (pid2 < 0) {
+            cerr << "There was an error forking!" << endl;
+            kill(pid1, SIGUSR1);
+            wait();
+            exit(-1);
+        } else if (pid2 == 0) {
+            //SEND code:
+            close(pipeFD[WRITE_END]);
+            signal(SIGUSR1, sigusr1Handler);
+
+            sending();
+
+            //Terminate this... (Unreachable)
+            close(pipeFD[READ_END]);
+            cerr << "SEND app terminating..." << endl;
+            exit(EXIT_SUCCESS);
+        } else {
+            //INPUT code:
+            close(pipeFD[READ_END]);
+            signal(SIGUSR2, sigusr2Handler);
+            inputing(pipeFD[WRITE_END]);
+
+            //Terminate app (unreachable?):
+            kill(pid1, SIGUSR1);
+            wait();
+            kill(pid2, SIGUSR1);
+            wait();
+            cerr << "Main app terminating.. " << endl;
+            close(pipeFD[WRITE_END]);
+            exit(EXIT_SUCCESS);
+        }
+
+    }
+
+
+
     if (argc != 3) {
         cerr << "Wrong number of arguments! \nUsage: ./node <ID> <cfg file>" << endl;
         return -1;
@@ -36,9 +154,43 @@ int main(int argc, char *argv[]) {
         exit(-1);
     }
     cout << "Starting client with ID " << argv[1]  << endl;
+    sockaddr_in serv_addr, cli_addr;
+    int sockFD = socket(AF_INET, SOCK_DGRAM, 0);
+    int newsockFD = -1;
+    if (sockFD < 0) {
+        cerr << "Error opening socket..." << endl;
+        exit(-1);
+    }
+    bzero((char * ) &serv_addr, sizeof(serv_addr));
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_addr.s_addr = INADDR_ANY;
+    serv_addr.sin_port = htons((uint16_t) localPort);
+
+    if (bind(sockFD, (struct sockaddr * ) &serv_addr, sizeof(serv_addr)) < 0) {
+        cerr << "Error on binding" << endl;
+        exit(-1);
+    }
+
+    listen(sockFD, 5);
+    int clilen = sizeof(cli_addr);
+    while(1) {
+        newsockFD = accept(sockFD, (struct sockaddr *) &cli_addr, &clilen);
+        if (newsockFD < 0) {
+            cerr << "Error on accept..." << endl;
+        }
+
+        communicate(newsockFD);
+
+        close(newsockFD);
+    }
 
     /*
      * General plan:
+     *
+     * Need it to be able to:
+     *  1. process: Be ready to accept user input, communicate via pipe with sending process
+     *  2. process: Sending process, be ready to accept any commands from input process or receiving process
+     *  3. process: Be ready to accept messages, if its needed, send via 2. process or write to console.
      *
      * Message:
      *  4 words on start of message:
@@ -89,4 +241,17 @@ int main(int argc, char *argv[]) {
 
 
 
+}
+
+void communicate(int sockFD) {
+    int n = 0;
+    char buffer[MAX_MESSAGE_LEN];
+    bzero(buffer, MAX_MESSAGE_LEN);
+    n = (int) read(sockFD, buffer, MAX_MESSAGE_LEN - 1);
+    if (n < 0) {
+        cerr << "Error reading from socket..." << endl;
+    }
+
+    string message(buffer);
+    cout << message << endl;
 }
