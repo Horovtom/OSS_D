@@ -170,7 +170,9 @@ void sendReceived(int fileDescriptor);
 
 int generateMessageID();
 
-string getIDFromPath(string PATH, int position);
+int getIDFromPath(string PATH, int position);
+
+bool isInPath(int id, string PATH);
 
 int main(int argc, char *argv[]) {
     if (argc != 3) {
@@ -383,9 +385,18 @@ void parseMessage(string message, int fileDescriptor) {
     switch (atoi(header[HEADER_TYPE].c_str())) {
         case MSG:
             sendReceived(fileDescriptor);
-            if (atoi(header[HEADER_TARGET]) == localID) {
+            if (atoi(header[HEADER_TARGET].c_str()) == localID) {
                 //This message was for me... Print it to cout
-                string from = getIDFromPath(header[HEADER_PATH], 0);
+                int from = getIDFromPath(header[HEADER_PATH], 0);
+                cout << "Message from: " << from << endl;
+                cout << text;
+            } else {
+                //This message was not for me... Hubbing it
+                for (int i = 0; i < connectionCount; ++i) {
+                    if (!isInPath(connections[i].id, header[HEADER_PATH])) {
+
+                    }
+                }
             }
             break;
         case DELIVERED:
@@ -412,9 +423,27 @@ void parseMessage(string message, int fileDescriptor) {
 }
 
 /**
+ * Returns whether a specified id is in PATH string
+ */
+bool isInPath(int id, string PATH) {
+    int i = 0;
+    while(i < 1000) {
+        int currID = getIDFromPath(PATH, i);
+        if (currID < 0) {
+            return false;
+        } else if (id == currID) {
+            return true;
+        }
+        i++;
+    }
+    cerr << "isInPath was looping for way too long! Check it out!" << endl;
+    return false;
+}
+
+/**
  * Gets ID writeen in PATH on position.
  */
-string getIDFromPath(string PATH, int position) {
+int getIDFromPath(string PATH, int position) {
     string ID = "";
     int i = 0;
     for (int j = 0; j < position + 1; ++j) {
@@ -424,7 +453,7 @@ string getIDFromPath(string PATH, int position) {
             ID.push_back(PATH[i]);
             i++;
             if (i > PATH.length()) {
-                return NULL;
+                return -1;
             } else if (i == PATH.length()) {
                 break;
             }
@@ -432,8 +461,10 @@ string getIDFromPath(string PATH, int position) {
         i++;
 
     }
-
-    return ID;
+    if (ID == "") {
+        return -1;
+    }
+    return atoi(ID.c_str());
 
 }
 
@@ -441,7 +472,6 @@ string getIDFromPath(string PATH, int position) {
  * Sends received message back to neighbour
  */
 void sendReceived(int fileDescriptor) {
-    //TODO: COMPLETE
     string receivedMessage = "";
     receivedMessage.push_back(RECEIVED);
     receivedMessage.append(" ");
@@ -456,7 +486,7 @@ int generateMessageID() {
     time_t currTime;
     time(&currTime);
 
-    //TODO: Make this more complex maybe
+    //Make this more complex maybe
     return (int) currTime;
 }
 
