@@ -404,7 +404,7 @@ void parseMessage(string message, int fileDescriptor, int pipeDescriptor) {
                         index.append(to_string(i)).append(";");
                     }
                 }
-                //  We sent a string which looks like this:
+                //  We sent a string which looks like this: 
                 //  1;4;23;15;
                 write(pipeDescriptor, index.c_str(), index.length() + 1);
 
