@@ -40,24 +40,33 @@ int pid1;
 int pid2;
 
 /**
- * This is here in order to terminate the whole app from INPUT part
+ * This is here in order to terminate the whole app...
  */
 void sigusr1Handler(int signalNum) {
     cerr << "Terminated..." << endl;
-    int returnVal;
-    wait(&returnVal);
+    int returnVal = 0;
+    if (kill(pid1, SIGUSR1) != 0) returnVal = -1;
+    wait();
+    if (kill(pid2, SIGUSR1)!= 0) returnVal = -1;
+    wait();
     exit(returnVal);
 }
 
-/**
- * This is here for SEND and RECV parts of app to terminate app on error
- */
-void sigusr2Handler(int signalNum) {
-    cerr << "Im about to terminate app.." << endl;
-    //TODO:COMPLETE
-}
+///**
+// * This is here for SEND and RECV parts of app to terminate app on error
+// */
+//void sigusr2Handler(int signalNum) {
+//    cerr << "Im about to terminate app.." << endl;
+//    kill(pid1)
+//}
 
 void communicate(int sockfd);
+
+void inputing(int writeFD);
+
+void sending(int readFD);
+
+void recieving(int writeFD);
 
 using namespace std;
 int main(int argc, char *argv[]) {
@@ -97,7 +106,7 @@ int main(int argc, char *argv[]) {
             close(pipeFD[WRITE_END]);
             signal(SIGUSR1, sigusr1Handler);
 
-            sending();
+            sending(pipeFD[READ_END]);
 
             //Terminate this... (Unreachable)
             close(pipeFD[READ_END]);
@@ -106,7 +115,7 @@ int main(int argc, char *argv[]) {
         } else {
             //INPUT code:
             close(pipeFD[READ_END]);
-            signal(SIGUSR2, sigusr2Handler);
+            signal(SIGUSR1, sigusr1Handler);
             inputing(pipeFD[WRITE_END]);
 
             //Terminate app (unreachable?):
@@ -241,6 +250,18 @@ int main(int argc, char *argv[]) {
 
 
 
+}
+
+void recieving(int writeFD) {
+    //TODO: COMPLETE THIS
+}
+
+void sending(int readFD) {
+    //TODO: COMPLETE THIS
+}
+
+void inputing(int writeFD) {
+    //TODO: COMPLETE THIS
 }
 
 void communicate(int sockFD) {
