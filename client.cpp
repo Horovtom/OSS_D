@@ -413,6 +413,8 @@ void sendReceived(int fileDescriptor) {
     receivedMessage.push_back(RECEIVED);
     receivedMessage.append(" ");
     receivedMessage.append(to_string(generateMessageID()));
+    receivedMessage.append(" ").append(to_string(localID)).append(" ");
+    receivedMessage.append("YOU It came!");
     write(fileDescriptor, receivedMessage.c_str(), receivedMessage.length());
 }
 
