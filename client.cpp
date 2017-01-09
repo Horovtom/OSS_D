@@ -41,6 +41,17 @@
  *      $5 -> If it is to send a message {'MSG'}
  *
  *      $6 -> If it is to send a message {'DELIVERED_BROKEN', 'UNREACHABLE_BROKEN'}
+ *  DELIVERED MESSAGE:
+ *      looks like:
+ *      H_TYPE H_ID H_PATH H_TARGET
+ *      H_PATH is the path of the original Message
+ *      H_TARGET is the original sender.
+ *      So While creating DELIVERED message just change H_TARGET
+ *
+ *  RECEIVED MESSAGE:
+ *      looks like:
+ *      H_TYPE H_ID H_PATH H_TARGET
+ *      H_TARGET - 'YOU'
  */
 #include <iostream>
 #include <netinet/in.h>
@@ -132,6 +143,7 @@ int connectionCount;
 TConnection connections[100];
 sockaddr_in serv_addr, cli_addr;
 int sockFD;
+int pipeFD[2];
 
 /**
  * This is here in order to terminate the whole app...
@@ -160,7 +172,7 @@ void inputing(int writeFD);
 
 void sending(int readFD);
 
-void recieving(int writeFD);
+void recieving();
 
 void startForking();
 
@@ -175,6 +187,8 @@ int getIDFromPath(string PATH, int position);
 bool isInPath(int id, string PATH);
 
 string addMyIDToPath(string PATH);
+
+void tellSEND(string toSend);
 
 int main(int argc, char *argv[]) {
     if (argc != 3) {
@@ -274,7 +288,7 @@ int main(int argc, char *argv[]) {
 
 void startForking() {
     pid0 = ::getpid();
-    int pipeFD[2];
+
     if (pipe(pipeFD) < 0) {
         cerr << "Error creating pipe!" << endl;
         exit(-1);
@@ -290,7 +304,7 @@ void startForking() {
         //Registering signal that terminates the whole app
         signal(SIGUSR1, sigusr1Handler);
 
-        recieving(pipeFD[WRITE_END]);
+        recieving();
 
         //Terminate this... (Unreachable)
         close(pipeFD[WRITE_END]);
@@ -337,7 +351,7 @@ void startForking() {
 /*
  * This section acts like a server
  */
-void recieving(int writeFD) {
+void recieving() {
     int newSockFD = -1;
     listen(sockFD, 5);
     socklen_t clilen = sizeof(cli_addr);
@@ -355,15 +369,16 @@ void recieving(int writeFD) {
                 break;
             }
         }
-        parseMessage(message, newSockFD, writeFD);
+        parseMessage(message, newSockFD);
 
     }
 }
 
 /**
  * Decides what to do by the header of the message.
+ * @param fileDescriptor descriptor of the socket
  */
-void parseMessage(string message, int fileDescriptor, int pipeDescriptor) {
+void parseMessage(string message, int fileDescriptor) {
     string header[4];
     string text;
     int currChar = 0;
@@ -392,6 +407,9 @@ void parseMessage(string message, int fileDescriptor, int pipeDescriptor) {
                 int from = getIDFromPath(header[HEADER_PATH], 0);
                 cout << "Message from: " << from << endl;
                 cout << text;
+                //Send back DELIVERED
+
+                tellSEND();
             } else {
                 //This message was not for me... Hubbing it
                 //Adding my ID to its PATH:
@@ -404,21 +422,29 @@ void parseMessage(string message, int fileDescriptor, int pipeDescriptor) {
                         index.append(to_string(i)).append(";");
                     }
                 }
-                //  We sent a string which looks like this: 
+                //  We sent a string which looks like this:
                 //  1;4;23;15;
-                write(pipeDescriptor, index.c_str(), index.length() + 1);
+                tellSEND(index);
 
                 string newDocument = "";
                 newDocument.append(header[HEADER_TYPE]).append(" ").append(header[HEADER_ID]).append(" ").
                         append(header[HEADER_PATH]).append(" ").append(header[HEADER_TARGET]).append(" ");
                 newDocument.append(text);
-                write(pipeDescriptor, newDocument.c_str(), newDocument.length() + 1);
+                tellSEND(newDocument);
             }
 
             //Should be finished...
             break;
         case DELIVERED:
+            sendReceived(fileDescriptor);
+            if (atoi(header[HEADER_TARGET].c_str()) == localID) {
+                //Was for me...
+                string message = "DELIVERED ";
+                message.append(to_string())
 
+                tellSEND();
+
+            }
             break;
         case DELIVERED_BROKEN:
             sendReceived(fileDescriptor);
@@ -438,6 +464,13 @@ void parseMessage(string message, int fileDescriptor, int pipeDescriptor) {
     }
 
 
+}
+
+/**
+ * Sends message through pipe to the SEND section of app
+ */
+void tellSEND(string toSend) {
+    write(pipeFD[WRITE_END], toSend.c_str(), toSend.length() + 1);
 }
 
 string addMyIDToPath(string PATH) {
@@ -512,6 +545,12 @@ int generateMessageID() {
     return (int) currTime;
 }
 
+
+
+
+
+
+
 /**
  * Sending section of the application. Handles send-requests
  */
@@ -525,17 +564,4 @@ void sending(int readFD) {
  */
 void inputing(int writeFD) {
     //TODO: COMPLETE THIS
-}
-
-void communicate(int sockFD) {
-    int n = 0;
-    char buffer[MAX_MESSAGE_LEN];
-    bzero(buffer, MAX_MESSAGE_LEN);
-    n = (int) read(sockFD, buffer, MAX_MESSAGE_LEN - 1);
-    if (n < 0) {
-        cerr << "Error reading from socket..." << endl;
-    }
-
-    string message(buffer);
-    cout << message << endl;
 }
