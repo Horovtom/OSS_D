@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.6)
 project(D)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -lpthread -std=c++11 ")
 
 set(SOURCE_FILES client.cpp route_cfg_parser.h route_cfg_parser.c)
 add_executable(D ${SOURCE_FILES})
@@ -10,3 +10,5 @@ add_executable(test_cfg_parser ${SOURCE_FILES_CFG_TEST})
 set(SOURCE_FILES_TEST_PIPES testPipes.cpp)
 add_executable(test_pipes ${SOURCE_FILES_TEST_PIPES})
 add_executable(test_functions testFunctions.cpp)
+add_executable(test_threads TEST_THREADS/test_threads.cpp)
+add_executable(client_threads Thread_architecture/client.cpp)

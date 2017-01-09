@@ -65,7 +65,7 @@ void startForking();
 void sigusr1Handler(int signalNum);
 void recieving(), sending(),inputing();
 
-//region startForking
+// region startForking
 int pid0, pid1, pid2;
 int pipeFD[2];
 
@@ -81,8 +81,6 @@ void sigusr1Handler(int signalNum) {
     wait(NULL);
     exit(returnVal);
 }
-
-
 
 void startForking() {
     pid0 = ::getpid();
@@ -185,7 +183,7 @@ void sending() {
     }
 }
 
-//endregion
+// endregion
 
 bool isInPath(int id, string PATH) {
     int i = 0;

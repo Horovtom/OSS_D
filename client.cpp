@@ -190,6 +190,8 @@ string addMyIDToPath(string PATH);
 
 void tellSEND(string toSend);
 
+void runReceiveLoop(int fd);
+
 int main(int argc, char *argv[]) {
     if (argc != 3) {
         cerr << "Wrong number of arguments! \nUsage: ./node <ID> <cfg file>" << endl;
@@ -240,14 +242,6 @@ int main(int argc, char *argv[]) {
     startForking();
     exit(0);
 
-
-
-
-
-
-
-
-
 //    if (sockFD < 0) {
 //        cerr << "Error opening socket..." << endl;
 //        exit(-1);
@@ -274,15 +268,6 @@ int main(int argc, char *argv[]) {
 //
 //        close(newsockFD);
 //    }
-
-
-
-
-
-
-
-    return 0;
-
 
 }
 
@@ -348,31 +333,69 @@ void startForking() {
 
 }
 
-/*
- * This section acts like a server
- */
+///*
+// * This section acts like a server
+// */
+//void recieving() {
+//    int newSockFD;
+//    listen(sockFD, 5);
+//    socklen_t clilen = sizeof(cli_addr);
+//    while (1) {
+//        newSockFD = accept(sockFD, (struct sockaddr *) &cli_addr, &clilen);
+//        if (newSockFD < 0) {
+//            cerr << "Error on accept... " << endl;
+//        }
+//        string message;
+//        char ch;
+//        while (read(newSockFD, &ch, 1) > 0) {
+//            if (ch != 0) message.push_back(ch);
+//            else {
+//                message.push_back('\n');
+//                break;
+//            }
+//        }
+//        parseMessage(message, newSockFD);
+//
+//    }
+//}
+
 void recieving() {
-    int newSockFD = -1;
+    int newSockFD;
     listen(sockFD, 5);
     socklen_t clilen = sizeof(cli_addr);
-    while (1) {
+    while(1) {
         newSockFD = accept(sockFD, (struct sockaddr *) &cli_addr, &clilen);
         if (newSockFD < 0) {
             cerr << "Error on accept... " << endl;
         }
+        int pid = fork();
+        if (pid < 0) {
+            cerr << "Error forking!" << endl;
+        } else if (pid == 0) {
+            close(sockFD);
+            runReceiveLoop(newSockFD);
+            exit(0);
+        } else {
+            close(newSockFD);
+        }
+    }
+}
+
+void runReceiveLoop(int fd) {
+    while(1) {
         string message;
         char ch;
-        while (read(newSockFD, &ch, 1) > 0) {
+        while(read(fd, &ch, 1)>0){
             if (ch != 0) message.push_back(ch);
             else {
-                message.push_back('\n');
+                message.push_back(ch);
                 break;
             }
         }
-        parseMessage(message, newSockFD);
-
+        parseMessage(message, fd);
     }
 }
+
 
 /**
  * Decides what to do by the header of the message.
