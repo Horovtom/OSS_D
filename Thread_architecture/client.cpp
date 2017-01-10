@@ -57,6 +57,60 @@
 #include <sys/types.h>
 #include <sys/time.h>
 
+//region terminal commands
+/* SETCOLUMN(n)
+ * SETX(n)
+ *
+ * Set the current cursor column ( x coordinate ) position to n
+ */
+#if defined(SETCOLUMN)
+#undef SETCOLUMN
+#endif
+#if defined(SETX)
+#undef SETX
+#endif
+#define SETCOLUMN(n)        printf("\033[%dG")
+#define SETX(n)            printf("\033[%dG")
+
+#ifdef CLS
+#undef CLS
+#endif
+#define CLS()            printf("\033[H\033[2J"); fflush(stdout)
+
+/* DECLINE(n)
+ *
+ * Decrement cursor n lines up
+ */
+#if defined(DECLINE)
+#undef DECLINE
+#endif
+#define DECLINE(n)        cout << "\033[" << n << "E"; fflush(stdout);
+/* INCLINE(n)
+ *
+ * Increment cursor n lines down
+ */
+#if defined(INCLINE)
+#undef INCLINE
+#endif
+#define INCLINE(n)        cout << "\033[" << n << "F"; fflush(stdout);
+
+/* SAVECURPOS()
+ * Takes no arguments... Saves the cursor position internally
+ */
+#if defined(SAVECURPOS)
+#undef SAVECURPOS
+#endif
+#define SAVECURPOS()        cout << "\033[s"; fflush(stdout);
+/* RESTORECURPOS()
+ * Takes no arguments... Restores a previously saved cursor position
+ */
+#if defined(RESTORECURPOS)
+#undef RESTORECURPOS
+#endif
+#define RESTORECURPOS()        cout << "\033[u"; fflush(stdout);
+
+//endregion
+
 /**
  * Message to some TARGET
  */
@@ -261,15 +315,13 @@ int getLastInPath(string PATH);
 
 void queueResendingMessage(string text, vector<int> toWho, string Header[5]);
 
-void waitingForReceived(int targetID, string PATH, string messageID, int type);
+void waitingForReceived(int targetID, string header[5]);
 
 void gotDelivered(string ID);
 
 void gotUnreachable(string ID);
 
 int removeTimer(string ID);
-
-void passBroken(string header[5]);
 
 /**
  * This function resends message.
@@ -279,6 +331,12 @@ void passMessage(string header[5], string text);
 void queueSendMessage(int toWhom, string text);
 
 void waitingForDelivered(int id, int toWhom);
+
+void backTrackMessage(string header[5]);
+
+void printMessage(int from, string text);
+
+void receivedArrived(int ID);
 
 Dataholder mailbox;
 
@@ -350,6 +408,7 @@ void partReceive() {
 }
 
 void parseMessage(string message) {
+//    cout << "Parsing message: \n" << message << endl;
     string header[5];
     string text;
 
@@ -358,7 +417,7 @@ void parseMessage(string message) {
     getline(stream, headerLine);
     int currChar = 0;
     for (int k = 0; k < 5; ++k) {
-        if (currChar >= headerLine.length() && k < 4){
+        if (currChar >= headerLine.length() && k < 4) {
             cerr << "Error parsing header! Throwing away!" << endl;
             return;
         }
@@ -390,9 +449,8 @@ void parseMessage(string message) {
                 //This message was for me... Print it to cout and send received
                 int from = getIDFromPath(header[HEADER_PATH], 0);
                 queueSendingReceived(header[HEADER_ID], from);
-                cout << "Message from: " << from << endl;
-                cout << text << endl;
-                cout << "-------------\n" << endl;
+
+                printMessage(from, text);
                 //Send back DELIVERED
                 queueSendingDelivered(header[HEADER_PATH], header[HEADER_ID]);
             } else {
@@ -407,6 +465,8 @@ void parseMessage(string message) {
             if (atoi(header[HEADER_TARGET].c_str()) == localID) {
                 //Was for me...
                 gotDelivered(header[HEADER_OPTIONAL]);
+            } else {
+                backTrackMessage(header);
             }
             break;
         }
@@ -434,22 +494,57 @@ void parseMessage(string message) {
         }
 
         case UNREACHABLE: {
-
+            if (atoi(header[HEADER_TARGET].c_str()) == localID) {
+                //This was for me!
+                gotUnreachable(header[HEADER_OPTIONAL]);
+            } else {
+                backTrackMessage(header);
+            }
             break;
         }
 
 
         case RECEIVED: {
-
+            receivedArrived(atoi(header[HEADER_ID].c_str()));
             break;
         }
 
         default: {
 
-            cerr << "Header type not recognised!" << endl;
-            //TODO: DO SOMETHING
+            cerr << "Header type not recognised.. Throwing away" << endl;
+            return;
         }
     }
+}
+
+/**
+ * This function stops timer :)
+ */
+void receivedArrived(int ID) {
+    //TODO: I HAVE NO IDEA HOW TO DO THIS...
+}
+
+void printMessage(int from, string text) {
+    cout << "\n----------" << endl;
+    cout << "Message from: " << from << ": " << endl;
+    cout << text << endl;
+    cout << "-------------" << endl;
+}
+
+/**
+ * Forwards this message to the next guy int the PATH... Waiting for RECEIVED after that...
+ */
+void backTrackMessage(string header[5]) {
+    int next = getLastInPath(header[HEADER_PATH]);
+    waitingForReceived(next, header);
+    vector<int> toWho;
+    toWho.push_back(next);
+    string message;
+    for (int i = 0; i < header->length(); ++i) {
+        message.append(header[i]).append(" ");
+    }
+    message.append("\n");
+    putToMailbox(message, toWho);
 }
 
 /**
@@ -464,8 +559,7 @@ void passMessage(string header[5], string text) {
             //It is for my neighbour!!!
             toWho.clear();
             toWho.push_back(connections[i].id);
-            waitingForReceived(connections[i].id, header[HEADER_PATH], header[HEADER_ID],
-                               atoi(header[HEADER_TYPE].c_str()));
+            waitingForReceived(connections[i].id, header);
             break;
         }
 
@@ -476,7 +570,7 @@ void passMessage(string header[5], string text) {
     }
     //ToWho filled
 
-    queueResendingMessage("", toWho, header);
+    queueResendingMessage(text, toWho, header);
 }
 
 /**
@@ -504,13 +598,11 @@ int removeTimer(string ID) {
 /**
  * Queues the wait for RECEIVED message...
  * @param targetID the ID of node from which the RECEIVED should come
- * @param PATH is the path the message had taken previously
- * @param messageID
- * @param type of message that it was
+ * @param header of the original message
  */
-void waitingForReceived(int targetID, string PATH, string messageID, int type) {
+void waitingForReceived(int targetID, string header[5]) {
     //TODO: DoStuff with this (I have no idea how to time this...)
-
+    int type = atoi(header[HEADER_TYPE].c_str());
     if (type == MSG) {
         //If this does not come, send UNREACAHBLE back by PATH
 
@@ -541,12 +633,10 @@ void queueResendingMessage(string text, vector<int> toWho, string Header[5]) {
 }
 
 bool isInPath(int id, string PATH) {
-    cout << "Looking for " << id << " in " << PATH << endl;
     int i = 0;
     while (i < 1000) {
         int currID = getIDFromPath(PATH, i);
         if (currID < 0) {
-            cout << "Did nto find it!" << endl;
             return false;
         } else if (id == currID) {
             cout << "Found it!" << endl;
@@ -567,9 +657,9 @@ string addMyIDToPath(string PATH) {
  */
 void queueSendingDelivered(string PATH, string ID_ofOriginal) {
     int from = getIDFromPath(PATH, 0);
-    string messageToSend = "DELIVERED ";
-    messageToSend.append(to_string(generateMessageID())).append(" ").append(PATH).append(" ").append(to_string(from));
-    messageToSend.append(" ").append(ID_ofOriginal);
+    string messageToSend = to_string(DELIVERED);
+    messageToSend.append(" ").append(to_string(generateMessageID())).append(" ")
+            .append(PATH).append(" ").append(to_string(from)).append(" ").append(ID_ofOriginal);
 
     int to = getLastInPath(PATH);
     putToMailbox(messageToSend, to);
@@ -607,10 +697,9 @@ void putToMailbox(string message, vector<int> toWho) {
  * Tells SENDING part of the app to send RECEIVED message to the sender (neighbour)
  */
 void queueSendingReceived(string messageID, int senderID) {
-    string messageToSend = "RECEIVED ";
-    messageToSend.append(to_string(generateMessageID())).append(" ").append(to_string(localID)).append(" ").append(
-            to_string(senderID)).append(" ");
-    messageToSend.append(messageID);
+    string messageToSend = to_string(RECEIVED);
+    messageToSend.append(" ").append(to_string(generateMessageID())).append(" ").append(to_string(localID))
+            .append(" ").append(to_string(senderID)).append(" ").append(messageID);
 
     putToMailbox(messageToSend, senderID);
 }
@@ -664,7 +753,7 @@ void partInput() {
             cerr << "You haven't entered valid ID" << endl;
         } else {
             //Okay it seems valid
-            cout << "Enter text to send to " << toWhom << endl;
+            cout << "Enter text to send to " << toWhom << ": ";
             cin.ignore(numeric_limits<streamsize>::max(), '\n');
             getline(cin, text);
             if (text == "") {
@@ -674,6 +763,7 @@ void partInput() {
                 queueSendMessage(atoi(toWhom.c_str()), string(text));
             }
         }
+        cout << "\n";
     }
 }
 
@@ -745,7 +835,7 @@ int main(int argc, char *argv[]) {
                 if (connections[i].ip_address == "") {
                     cout << "Rewriting to localhost:" << endl;
                     strcpy(connections[i].ip_address, "127.0.0.1");
-                    cout << "Rewritten to: " << connections[i].ip_address<<endl;
+                    cout << "Rewritten to: " << connections[i].ip_address << endl;
                 }
             }
         } else {
@@ -772,7 +862,7 @@ int main(int argc, char *argv[]) {
     bzero(&serv_addr, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    cout << "Local port: " << localPort  << endl;
+    cout << "Local port: " << localPort << endl;
     serv_addr.sin_port = htons((uint16_t) localPort);
 
     //Bind socket to port:
@@ -809,12 +899,13 @@ int main(int argc, char *argv[]) {
         toAdd.sin_port = htons((uint16_t) connections[j].port);
         neighbours[connections[j].id] = toAdd;
     }
-
+    CLS();
     //Split into 3 parts SEND, RECV, INPUT:
     thread send(partSend);
     thread receive(partReceive);
     thread input(partInput);
-    cout << "Application successfully created all threads" << endl;
+//    cout << "Application successfully created all threads" << endl;
+
 
     //Now join everything:
     input.join();
