@@ -1,2 +1,5 @@
 *.o
 .idea/
+test/
+TEST_THREADS/
+test*
