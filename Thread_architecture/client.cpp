@@ -22,12 +22,11 @@
  *
  * DELIVERED message looks like:
  *
- *      Header: <DELIVERED> <Reply's ID> <original message PATH> <to whom this DELIVERED should go>
- *      text: <ID of original message>
+ *      Header: <DELIVERED> <Reply's ID> <original message PATH> <to whom this DELIVERED should go> <ID of original message>
  *
  * RECEIVED messag looks like:
- *      Header: <RECEIVED> <Reply's ID> <this node's ID> <to whom this RECEIVED was sent>
- *      text: <ID of original message>
+ *      Header: <RECEIVED> <Reply's ID> <this node's ID> <to whom this RECEIVED was sent> <ID of original message>
+ *
  */
 
 #include <iostream>
@@ -223,6 +222,8 @@ void queueResendingMessage(string text, vector<int> toWho, string Header[5]);
 
 void waitingForReceived(int targetID, string PATH, string messageID, int type);
 
+void gotDelivered(string ID);
+
 Dataholder mailbox;
 
 
@@ -336,8 +337,7 @@ void parseMessage(string message) {
             queueSendingDelivered(header[HEADER_PATH], header[HEADER_ID]);
             if (atoi(header[HEADER_TARGET].c_str()) == localID) {
                 //Was for me...
-                //TODO: Here just log that the message has gotten to its destination
-
+                gotDelivered(header[HEADER_OPTIONAL]);
             }
             break;
         }
@@ -367,6 +367,13 @@ void parseMessage(string message) {
             //TODO: DO SOMETHING
         }
     }
+}
+
+/**
+ * This function removes the timer on TIEOUT, because DELIVERED message invoked by message with <ID> had arrived
+ */
+void gotDelivered(string ID) {
+    //TODO: REMOVE THE TIMER (No idea how to implement this)
 }
 
 /**
