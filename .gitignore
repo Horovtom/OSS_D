@@ -3,3 +3,4 @@
 test/
 TEST_THREADS/
 test*
+CMakeLists.txt
