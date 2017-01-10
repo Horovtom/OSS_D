@@ -53,6 +53,9 @@
 #include <map>
 #include <sstream>
 #include <algorithm>
+#include <arpa/inet.h>
+#include <sys/types.h>
+#include <sys/time.h>
 
 /**
  * Message to some TARGET
@@ -117,7 +120,6 @@ using namespace std;
 std::vector<long> listOfMessages;
 int localID;
 int localPort;
-timeval timeOutVal;
 int connectionCount;
 TConnection connections[100];
 sockaddr_in serv_addr;
@@ -287,7 +289,7 @@ Dataholder mailbox;
 
 
 /**
- * Má na starosti odesílání message
+ * Takes care of sending messages
  */
 void partSend() {
     while (mailbox.shouldRun()) {
@@ -301,10 +303,11 @@ void partSend() {
 
         for (int i = 0; i < toWho.size(); ++i) {
             //TODO: TeSTING
-            //cout << "Sending message to : " << toWho[i] << endl;
-            int result = (int) sendto(cliSockFD, message.c_str(), message.length(), 0, (struct sockaddr *) &neighbours[toWho[i]], sizeof(neighbours[toWho[i]]));
+//            cout << "Sending message to : " << toWho[i] << endl;
+            int result = (int) sendto(cliSockFD, message.c_str(), message.length(), 0,
+                                      (struct sockaddr *) &neighbours[toWho[i]], sizeof(neighbours[toWho[i]]));
             //TODO: TESTING
-            //cout << "Sending message returned: " << result << endl;
+//            cout << "Sending message returned: " << result << endl;
         }
 
     }
@@ -319,19 +322,23 @@ void partSend() {
  * Má na starosti obsluhu příchozích message na pozadí
  */
 void partReceive() {
+    struct timeval timeOutVal;
     char buffer[MAX_MESSAGE_LEN];
+    ssize_t rect_len;
+
+    fd_set set;
+
     while (mailbox.shouldRun()) {
         bzero(&buffer, MAX_MESSAGE_LEN);
-        sockaddr_in newAddr;
-        bzero(&newAddr, sizeof(newAddr));
-        socklen_t slen = sizeof(newAddr);
-        fd_set set;
+
         FD_ZERO(&set);
         FD_SET(servSockFD, &set);
         timeOutVal.tv_sec = 1;
-        int rect_len = 0;
-        if (select(1, &set, NULL, NULL, &timeOutVal) > 0 ){
-            rect_len = (int) recvfrom(servSockFD, buffer, MAX_MESSAGE_LEN, 0, (struct sockaddr *) &newAddr, &slen);
+        rect_len = 0;
+        if (select(servSockFD + 1, &set, NULL, NULL, &timeOutVal) > 0) {
+//            cout << "I am receiving something!" << endl;
+            rect_len = (int) recv(servSockFD, &buffer, MAX_MESSAGE_LEN, 0);
+//            cout << "I ve received " << rect_len << " chars" << endl;
         }
 
         if (rect_len > 0) {
@@ -351,6 +358,10 @@ void parseMessage(string message) {
     getline(stream, headerLine);
     int currChar = 0;
     for (int k = 0; k < 5; ++k) {
+        if (currChar >= headerLine.length() && k < 4){
+            cerr << "Error parsing header! Throwing away!" << endl;
+            return;
+        }
         while (currChar < headerLine.length() && message[currChar] != ' ') {
             header[k].push_back(message[currChar]);
             currChar++;
@@ -600,7 +611,6 @@ void queueSendingReceived(string messageID, int senderID) {
     messageToSend.append(to_string(generateMessageID())).append(" ").append(to_string(localID)).append(" ").append(
             to_string(senderID)).append(" ");
     messageToSend.append(messageID);
-    //TODO: Create counterpart listener in SENDING part of app
 
     putToMailbox(messageToSend, senderID);
 }
@@ -640,6 +650,7 @@ int getIDFromPath(string PATH, int position) {
  * Serves user-input related stuff
  */
 void partInput() {
+    //TODO: ADD SUPPORT FOR NEIGHBOUR AS TARGET
     while (mailbox.shouldRun()) {
         string toWhom;
         string text;
@@ -731,6 +742,11 @@ int main(int argc, char *argv[]) {
                 cout << "   Connection to the node " << connections[i].id << " at " <<
                      connections[i].ip_address << (connections[i].ip_address[0] ? ":" : "port ") <<
                      connections[i].port << endl;
+                if (connections[i].ip_address == "") {
+                    cout << "Rewriting to localhost:" << endl;
+                    strcpy(connections[i].ip_address, "127.0.0.1");
+                    cout << "Rewritten to: " << connections[i].ip_address<<endl;
+                }
             }
         } else {
             cout << "No connections to this node!" << endl;
@@ -756,11 +772,11 @@ int main(int argc, char *argv[]) {
     bzero(&serv_addr, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    cout << "Local port: " << localPort  << endl;
     serv_addr.sin_port = htons((uint16_t) localPort);
 
     //Bind socket to port:
-    if (bind(
-            servSockFD, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
+    if (bind(servSockFD, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
         cerr << "Unable to bind socket to port!" << endl;
         exit(-1);
     }
@@ -769,7 +785,7 @@ int main(int argc, char *argv[]) {
     bzero(&cli_addr, sizeof(cli_addr));
     cli_addr.sin_family = AF_INET;
     cli_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    cli_addr.sin_port = htons(SENDING_PORT);
+    cli_addr.sin_port = htons((uint16_t) (SENDING_PORT - localID));
 
     //Bind socket to port:
     if (bind(
@@ -783,9 +799,13 @@ int main(int argc, char *argv[]) {
         sockaddr_in toAdd;
         toAdd.sin_family = AF_INET;
         if (!connections[j].ip_address[0]) {
-            connections[j].ip_address[0] = '1';
-            cout << connections[j].ip_address << endl;
+            strcpy(connections[j].ip_address, "127.0.0.1");
+//            connections[j].ip_address[0] = '1';
+            toAdd.sin_addr.s_addr = htonl(INADDR_ANY);
+        } else {
+            inet_pton(AF_INET, connections[j].ip_address, &toAdd.sin_addr);
         }
+//        cout << "       Node " << connections[j].id << " address: " << connections[j].ip_address << endl;
         toAdd.sin_port = htons((uint16_t) connections[j].port);
         neighbours[connections[j].id] = toAdd;
     }
@@ -809,13 +829,29 @@ int main(int argc, char *argv[]) {
 void testing() {
     //TODO: Insert tests here!
 
-
+    if ((servSockFD = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
+        cerr << "Failed to create socket" << endl;
+        exit(EXIT_FAILURE);
+    }
 
     connectionCount = 100;
     localID = 1;
     parseRouteConfiguration("routing.cfg", localID, &localPort, &connectionCount, connections);
 
-    partInput();
+    //Set server socket
+    bzero(&serv_addr, sizeof(serv_addr));
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    serv_addr.sin_port = htons((uint16_t) localPort);
+
+    //Bind socket to port:
+    if (bind(
+            servSockFD, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
+        cerr << "Unable to bind socket to port!" << endl;
+        exit(-1);
+    }
+
+    partReceive();
 
 //
 //    string message = to_string(DELIVERED_BROKEN);

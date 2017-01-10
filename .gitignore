@@ -5,3 +5,4 @@ TEST_THREADS/
 test*
 CMakeLists.txt
 Makefile
+test2/

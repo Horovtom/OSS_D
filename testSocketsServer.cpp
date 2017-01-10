@@ -71,22 +71,25 @@ int main(int argc, char* argv[]) {
     int buflen = 256;
 
     //create a UDP socket
-    if ((s=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
-    {
+    s=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (s < 0){
         cerr << "Bullshit" << endl;
+    } else {
+        cout << "Socket: " << s << endl;
     }
 
     // zero out the structure
-    memset((char *) &si_me, 0, sizeof(si_me));
-
+//    memset((char *) &si_me, 0, sizeof(si_me));
     si_me.sin_family = AF_INET;
+    si_me.sin_addr.s_addr = INADDR_ANY;
     si_me.sin_port = htons(7648);
-    si_me.sin_addr.s_addr = htonl(INADDR_ANY);
-
+    socklen_t sockaddrLen = sizeof(si_me);
     //bind socket to port
-    if( bind(s , (struct sockaddr*)&si_me, sizeof(si_me) ) == -1)
+    if(bind(s , (struct sockaddr*)&si_me, sizeof sockaddrLen) < 0)
     {
         cerr << "Bullshit2 " << endl;
+        close(s);
+        exit(-1);
     }
 
     //keep listening for data
