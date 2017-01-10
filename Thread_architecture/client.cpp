@@ -3,6 +3,23 @@
 //
 
 /**
+ * Site works like this:
+ * Say node wants to send a message to another node on specified <ID>, <mesID> is a part of the message, <PATH> is a part of the message.
+ * Node sends MSG to neighbours, they log that they had a message with such <mesID>, append node <ID> to <PATH>
+ * After that, they send the message to their neighbours.
+ * Every other iteration, nodes look at <PATH> the message had taken. If their Neighbour is already in the <PATH> they do not send it to him.
+ * If node sees, that the message is for his neighbour, sends it to him directly. This node is waiting for RECEIVED message from the target node.
+ * If it doesnt get it, send UNREACHABLE back by the <PATH> message had taken.
+ * The target node receives message and immediately sends RECEIVED message back to the sender. After that he displays the message to user.
+ * Target send DELIVERED type of message back to the original sender, by the <PATH> of original message.
+ *
+ * OPTIONAL:
+ *  Every node one the returning way (DELIVERED, UNREACHABLE) should send RECEIVED message back to the neighbour.
+ *  If RECEIVED doesnt make it in time to the neighbour, he sends DELIVERED_BROKEN/UNREACHABLE_BROKEN
+ *  These behave just like normal messages... (Do not take the shortest path, but blindly wander around the network)
+ *  If they do not make it to the original sender in time, he throws target_unreachable back at the user.
+ *
+ *
  * DELIVERED message looks like:
  *
  *      Header: <DELIVERED> <Reply's ID> <original message PATH> <to whom this DELIVERED should go>
@@ -271,14 +288,13 @@ void parseMessage(string message) {
     }
     //Add it to the list of messages
     listOfMessages.push_back(atol(header[HEADER_ID].c_str()));
-
     switch (atoi(header[HEADER_TYPE].c_str())) {
         case MSG: {
             //TODO: Probably need something to wait for received messages and throw panic if it doesnt come in time
-            int from = getIDFromPath(header[HEADER_PATH], 0);
-            queueSendingReceived(header[HEADER_ID], from);
             if (atoi(header[HEADER_TARGET].c_str()) == localID) {
-                //This message was for me... Print it to cout
+                //This message was for me... Print it to cout and send received
+                int from = getIDFromPath(header[HEADER_PATH], 0);
+                queueSendingReceived(header[HEADER_ID], from);
                 cout << "Message from: " << from << endl;
                 cout << text << endl;
                 cout << "-------------\n" << endl;
@@ -290,6 +306,7 @@ void parseMessage(string message) {
                 header[HEADER_PATH] = addMyIDToPath(header[HEADER_PATH]);
 
                 vector<int> toWho;
+                cout << "ConnectionCount=" << connectionCount << endl;
                 for (int i = 0; i < connectionCount; ++i) {
                     if (!isInPath(connections[i].id, header[HEADER_PATH])) {
                         //Fill string of messages:
@@ -309,8 +326,7 @@ void parseMessage(string message) {
             queueSendingDelivered(header[HEADER_PATH], header[HEADER_ID]);
             if (atoi(header[HEADER_TARGET].c_str()) == localID) {
                 //Was for me...
-                //TODO: DOSTUFF
-
+                //TODO: Here just log that the message has gotten to its destination
 
             }
             break;
@@ -353,17 +369,19 @@ void queueResendingMessage(string text, vector<int> toWho, string Header[5]) {
     }
     newMessage.push_back('\n');
     newMessage.append(text);
-
     putToMailbox(newMessage, toWho);
 }
 
 bool isInPath(int id, string PATH) {
+    cout << "Looking for " << id << " in " << PATH << endl;
     int i = 0;
     while(i < 1000) {
         int currID = getIDFromPath(PATH, i);
         if (currID < 0) {
+            cout << "Did nto find it!" << endl;
             return false;
         } else if (id == currID) {
+            cout << "Found it!" << endl;
             return true;
         }
         i++;
@@ -575,9 +593,12 @@ int main(int argc, char * argv[]) {
 
 void testing() {
     //TODO: Insert tests here!
-    string message = to_string(MSG);
-    message.append(" 2111 2;3 1\nAhoj já jsem týpek!");
-    cout << "Message was: \n" << message << endl;
+    connectionCount = 100;
     localID = 1;
+    parseRouteConfiguration("routing.cfg", localID, &localPort, &connectionCount, connections);
+
+    string message = to_string(MSG);
+    message.append(" 2111 2;3 6\nAhoj já jsem týpek!");
+    cout << "\n---------\nMessage was: \n" << message << "\n-----" << endl;
     parseMessage(message);
 }
