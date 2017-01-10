@@ -65,6 +65,10 @@
  * Index of a sectiom of header, that specifies the target (recipient of message)
  */
 #define HEADER_TARGET 3
+/**
+ * This is number of port from which will the application send messages to the outside world
+ */
+#define SENDING_PORT 19976
 
 using namespace std;
 
@@ -74,14 +78,16 @@ using namespace std;
 std::vector<int> listOfMessages;
 int localID;
 int localPort;
+
 int connectionCount;
 TConnection connections[100];
 sockaddr_in serv_addr;
+sockaddr_in cli_addr;
 /**
  * This is a map of <ID, net address> of all the neighbours
  */
 map<int, sockaddr_in> neighbours;
-int sockFD;
+int servSockFD, cliSockFD;
 mutex m;
 condition_variable cv;
 condition_variable cv2;
@@ -141,11 +147,18 @@ public:
 
 void testing();
 
+void parseMessage(string message);
+
+int getIDFromPath(string messageID, int senderID);
+
+void queueSendingReceived(string messageID, int senderID);
+
 Dataholder mailbox;
 
 
 
 // region PART SEND
+
 
 
 /**
@@ -166,8 +179,144 @@ void partSend() {
  * Má na starosti obsluhu příchozích message na pozadí
  */
 void partReceive() {
-    mailbox.write("Ahoj, já jsem RECIEVE");
-    mailbox.setReadyToRead();
+    char buffer[MAX_MESSAGE_LEN];
+    while(1) {
+        bzero(&buffer, MAX_MESSAGE_LEN);
+        sockaddr_in newAddr;
+        bzero(&newAddr, sizeof(newAddr));
+        socklen_t slen = sizeof(newAddr);
+        int rect_len = (int) recvfrom(servSockFD, buffer, MAX_MESSAGE_LEN, 0, (struct sockaddr*) &newAddr, &slen);
+        string message = buffer;
+
+        if (rect_len > 0) {
+            parseMessage(message);
+        }
+    }
+}
+
+void parseMessage(string message) {
+    string header[4];
+    string text;
+    int currChar = 0;
+    for (int i = 0; i < 4; ++i) {
+        while (message[currChar] != ' ') {
+            header[i].push_back(message[currChar]);
+            currChar++;
+        }
+    }
+    while (message[currChar] == ' ') currChar++;
+    while (currChar < message.length()) text.push_back(message[currChar]);
+    //Loaded:
+
+    //If this message had already been here
+    for (int j = 0; j < listOfMessages.size(); ++j) {
+        if (listOfMessages[j] == atoi(header[HEADER_ID].c_str()) && atoi(header[HEADER_TYPE]) != RECEIVED) return;
+    }
+    //Add it to the list of messages
+    listOfMessages.push_back(atoi(header[HEADER_ID].c_str()));
+
+    switch (atoi(header[HEADER_TYPE].c_str())) {
+        case MSG:
+            //TODO: Probably need something to wait for received messages and throw panic if it doesnt come in time
+            int from = getIDFromPath(header[HEADER_PATH], 0);
+            queueSendingReceived(header[HEADER_ID], from);
+            if (atoi(header[HEADER_TARGET].c_str()) == localID) {
+                //This message was for me... Print it to cout
+                cout << "Message from: " << from << endl;
+                cout << text;
+                //Send back DELIVERED
+
+                queueSendingDelivered()
+            } else {
+                //This message was not for me... Hubbing it
+                //Adding my ID to its PATH:
+                header[HEADER_PATH] = addMyIDToPath(header[HEADER_PATH]);
+
+                string index = "";
+                for (int i = 0; i < connectionCount; ++i) {
+                    if (!isInPath(connections[i].id, header[HEADER_PATH])) {
+                        //Fill string of messages:
+                        index.append(to_string(i)).append(";");
+                    }
+                }
+                //  We sent a string which looks like this:
+                //  1;4;23;15;
+                tellSEND(index);
+
+                string newDocument = "";
+                newDocument.append(header[HEADER_TYPE]).append(" ").append(header[HEADER_ID]).append(" ").
+                        append(header[HEADER_PATH]).append(" ").append(header[HEADER_TARGET]).append(" ");
+                newDocument.append(text);
+                tellSEND(newDocument);
+            }
+
+            //Should be finished...
+            break;
+        case DELIVERED:
+            queueSendingReceived();
+            if (atoi(header[HEADER_TARGET].c_str()) == localID) {
+                //Was for me...
+                string message = "DELIVERED ";
+                message.append(to_string())
+
+                tellSEND();
+
+            }
+            break;
+        case DELIVERED_BROKEN:
+            queueSendingReceived();
+            break;
+        case UNREACHABLE:
+
+            break;
+        case UNREACHABLE_BROKEN:
+            queueSendingReceived();
+            break;
+        case RECEIVED:
+
+            break;
+        default:
+            cerr << "Header type not recognised!" << endl;
+            //TODO: DO SOMETHING
+    }
+}
+
+/**
+ * Tells SENDING part of the app to send RECEIVED message to the sender
+ */
+void queueSendingReceived(string messageID, int senderID) {
+    string messageToSend = "RECEIVED ";
+    messageToSend.append(messageID).append(" ")
+            .append(to_string(localID)).append(" ")
+                    .append(to_string(senderID));
+    //TODO: Create counterpart listener in SENDING part of app
+}
+
+/**
+ * Gets ID writeen in PATH on position.
+ */
+int getIDFromPath(string PATH, int position) {
+    string ID = "";
+    int i = 0;
+    for (int j = 0; j < position + 1; ++j) {
+
+        ID = "";
+        while (i < PATH.length() && PATH[i] != ';') {
+            ID.push_back(PATH[i]);
+            i++;
+            if (i > PATH.length()) {
+                return -1;
+            } else if (i == PATH.length()) {
+                break;
+            }
+        }
+        i++;
+
+    }
+    if (ID == "") {
+        return -1;
+    }
+    return atoi(ID.c_str());
 }
 
 //endregion
@@ -221,22 +370,42 @@ int main(int argc, char * argv[]) {
     }
     cout << "Starting client with ID " << argv[1] << endl;
 
-    if ((sockFD = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
+    if ((servSockFD = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
         cerr << "Failed to create socket" << endl;
         exit(EXIT_FAILURE);
     }
 
+    if ((cliSockFD = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
+        cerr << "Failed to create socket" << endl;
+        exit(EXIT_FAILURE);
+    }
+    //Set server socket
     bzero(&serv_addr, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
     serv_addr.sin_port = htons((uint16_t) localPort);
 
     //Bind socket to port:
-    if (bind(sockFD, (struct sockaddr * ) &serv_addr, sizeof(serv_addr)) < 0) {
+    if (bind(
+            servSockFD, (struct sockaddr * ) &serv_addr, sizeof(serv_addr)) < 0) {
         cerr << "Unable to bind socket to port!" << endl;
         exit(-1);
     }
 
+    //Set client socket
+    bzero(&cli_addr, sizeof(cli_addr));
+    cli_addr.sin_family = AF_INET;
+    cli_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    cli_addr.sin_port = htons(SENDING_PORT);
+
+    //Bind socket to port:
+    if (bind(
+            cliSockFD, (struct sockaddr * ) &cli_addr, sizeof(cli_addr)) < 0) {
+        cerr << "Unable to bind socket to port!" << endl;
+        exit(-1);
+    }
+
+    //Save neighbour addresses...
     for (int j = 0; j < connectionCount; ++j) {
         sockaddr_in toAdd;
         toAdd.sin_family = AF_INET;
@@ -247,11 +416,6 @@ int main(int argc, char * argv[]) {
         toAdd.sin_port = htons((uint16_t) connections[j].port);
         neighbours[connections[j].id] = toAdd;
     }
-
-    //Neighbours loaded...
-
-
-
 
     //Split into 3 parts SEND, RECV, INPUT:
     thread send(partSend);
@@ -268,4 +432,11 @@ int main(int argc, char * argv[]) {
 
 void testing() {
     //TODO: Insert tests here!
+    string message;
+    char idiot[20];
+
+    cin >> idiot;
+    cout << "Idiot: " << idiot << endl;
+    message = idiot;
+    cout << "message: " << message << endl;
 }
