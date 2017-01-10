@@ -118,7 +118,7 @@ using namespace std;
 std::vector<long> listOfMessages;
 int localID;
 int localPort;
-
+timeval timeOutVal;
 int connectionCount;
 TConnection connections[100];
 sockaddr_in serv_addr;
@@ -135,7 +135,7 @@ condition_variable cv2;
 /**
  * Class that contains info that is shared among processes
  */
-class Dataholder{
+class Dataholder {
 private:
     string message;
     vector<int> toWho;
@@ -149,34 +149,49 @@ public:
         readyToWrite = true;
         shouldBeRunning = true;
     }
+
     bool shouldRun() {
         return shouldBeRunning;
     }
+
     bool isReadyToRead() {
         return readyToRead;
     }
+
     bool isReadyToWrite() {
         return readyToWrite;
     }
+
     void setReadyToWrite() {
         readyToWrite = true;
         readyToRead = false;
         cv2.notify_one();
     }
+
     void setReadyToRead() {
-         readyToRead = true;
+        readyToRead = true;
         readyToWrite = false;
         cv.notify_one();
     }
+
     /**
      * This is used for stopping the whole app...
      */
     void shouldStop() {
-     shouldBeRunning = false;
+        cerr << "Im stopping the app..." << endl;
+        shouldBeRunning = false;
+        readyToRead = true;
+        readyToWrite = true;
+        cv.notify_all();
+        cv2.notify_all();
     }
+
     string read_message() {
         unique_lock<mutex> lk(m);
-        cv.wait(lk, [&]{return isReadyToRead();});
+        cv.wait(lk, [&] { return isReadyToRead(); });
+        if (!shouldBeRunning) {
+            return "";
+        }
 
         if (!readyToRead) {
             cerr << "Somebody is trying to read, when he does not have the right to do so!" << endl;
@@ -185,21 +200,26 @@ public:
             return message;
         }
     }
+
     vector<int> read_toWho() {
         unique_lock<mutex> lk(m);
-        cv.wait(lk, [&]{return isReadyToRead();});
+        cv.wait(lk, [&] { return isReadyToRead(); });
+        vector<int> empty;
+        if (!shouldBeRunning) {
+            return empty;
+        }
 
         if (!readyToRead) {
             cerr << "Somebody is trying to read, when he does not have the right to do so!" << endl;
-            vector<int> empty;
             return empty;
         } else {
             return toWho;
         }
     }
+
     void write(string text, vector<int> recipients) {
         unique_lock<mutex> lk(m);
-        cv2.wait(lk, [&]{return isReadyToWrite();});
+        cv2.wait(lk, [&] { return isReadyToWrite(); });
         if (!readyToWrite) {
             cerr << "Somebody is trying to write when he does not have the right to!" << endl;
         } else {
@@ -216,7 +236,7 @@ public:
 
 void testing();
 
-inline bool isInteger(const std::string & s);
+inline bool isInteger(const std::string &s);
 
 int generateMessageID();
 
@@ -253,7 +273,7 @@ void passBroken(string header[5]);
 /**
  * This function resends message.
  */
-void passMessage(string header[5], string text) ;
+void passMessage(string header[5], string text);
 
 void queueSendMessage(int toWhom, string text);
 
@@ -271,11 +291,18 @@ Dataholder mailbox;
  * Má na starosti odesílání message
  */
 void partSend() {
-    while(mailbox.shouldRun()) {
+    while (mailbox.shouldRun()) {
+        string message = mailbox.read_message();
+        vector<int> toWho = mailbox.read_toWho();
+        mailbox.setReadyToWrite();
 
-
-
+        if (message == "" || toWho.size() == 0) {
+            break;
+        }
+        //TODO:COMPLETE SEND
+        
     }
+    cerr << "Terminate SEND" << endl;
 }
 
 // endregion
@@ -287,18 +314,26 @@ void partSend() {
  */
 void partReceive() {
     char buffer[MAX_MESSAGE_LEN];
-    while(mailbox.shouldRun()) {
+    while (mailbox.shouldRun()) {
         bzero(&buffer, MAX_MESSAGE_LEN);
         sockaddr_in newAddr;
         bzero(&newAddr, sizeof(newAddr));
         socklen_t slen = sizeof(newAddr);
-        int rect_len = (int) recvfrom(servSockFD, buffer, MAX_MESSAGE_LEN, 0, (struct sockaddr*) &newAddr, &slen);
-        string message = buffer;
+        fd_set set;
+        FD_ZERO(&set);
+        FD_SET(servSockFD, &set);
+        timeOutVal.tv_sec = 1;
+        int rect_len = 0;
+        if (select(1, &set, NULL, NULL, &timeOutVal) > 0 ){
+            rect_len = (int) recvfrom(servSockFD, buffer, MAX_MESSAGE_LEN, 0, (struct sockaddr *) &newAddr, &slen);
+        }
 
         if (rect_len > 0) {
+            string message = buffer;
             parseMessage(message);
         }
     }
+    cerr << "Terminating RECEIVE" << endl;
 }
 
 void parseMessage(string message) {
@@ -310,14 +345,14 @@ void parseMessage(string message) {
     getline(stream, headerLine);
     int currChar = 0;
     for (int k = 0; k < 5; ++k) {
-        while(currChar < headerLine.length() && message[currChar] != ' ') {
+        while (currChar < headerLine.length() && message[currChar] != ' ') {
             header[k].push_back(message[currChar]);
             currChar++;
         }
         currChar++;
     }
     string currLine;
-    while(getline(stream, currLine)) {
+    while (getline(stream, currLine)) {
         text.append(currLine);
     }
 
@@ -326,7 +361,9 @@ void parseMessage(string message) {
 
     //If this message had already been here
     for (int j = 0; j < listOfMessages.size(); ++j) {
-        if (listOfMessages[j] == atol(header[HEADER_ID].c_str()) && atoi(header[HEADER_TYPE].c_str()) != RECEIVED) return;
+        if (listOfMessages[j] == atol(header[HEADER_ID].c_str()) &&
+            atoi(header[HEADER_TYPE].c_str()) != RECEIVED)
+            return;
     }
     //Add it to the list of messages
     listOfMessages.push_back(atol(header[HEADER_ID].c_str()));
@@ -347,7 +384,7 @@ void parseMessage(string message) {
 
             //Should be finished...
             break;
-    }
+        }
         case DELIVERED: {
             queueSendingDelivered(header[HEADER_PATH], header[HEADER_ID]);
             if (atoi(header[HEADER_TARGET].c_str()) == localID) {
@@ -379,11 +416,10 @@ void parseMessage(string message) {
             break;
         }
 
-        case UNREACHABLE:{
+        case UNREACHABLE: {
 
             break;
         }
-
 
 
         case RECEIVED: {
@@ -411,7 +447,8 @@ void passMessage(string header[5], string text) {
             //It is for my neighbour!!!
             toWho.clear();
             toWho.push_back(connections[i].id);
-            waitingForReceived(connections[i].id, header[HEADER_PATH], header[HEADER_ID], atoi(header[HEADER_TYPE].c_str()));
+            waitingForReceived(connections[i].id, header[HEADER_PATH], header[HEADER_ID],
+                               atoi(header[HEADER_TYPE].c_str()));
             break;
         }
 
@@ -466,7 +503,7 @@ void waitingForReceived(int targetID, string PATH, string messageID, int type) {
             //If this does not come, send UNREACHABLE_BROKEN/DELIVERED_BROKEN
 
         } else {
-            cerr<<"I don't know which type this is:" << type << endl;
+            cerr << "I don't know which type this is:" << type << endl;
             return;
         }
     }
@@ -489,7 +526,7 @@ void queueResendingMessage(string text, vector<int> toWho, string Header[5]) {
 bool isInPath(int id, string PATH) {
     cout << "Looking for " << id << " in " << PATH << endl;
     int i = 0;
-    while(i < 1000) {
+    while (i < 1000) {
         int currID = getIDFromPath(PATH, i);
         if (currID < 0) {
             cout << "Did nto find it!" << endl;
@@ -505,7 +542,7 @@ bool isInPath(int id, string PATH) {
 }
 
 string addMyIDToPath(string PATH) {
-        return PATH.append(";").append(to_string(localID));
+    return PATH.append(";").append(to_string(localID));
 }
 
 /**
@@ -526,10 +563,10 @@ void queueSendingDelivered(string PATH, string ID_ofOriginal) {
  */
 int getLastInPath(string PATH) {
     int i = 0;
-    while(1) {
+    while (1) {
         int returnVal = getIDFromPath(PATH, i);
         if (returnVal == -1) {
-            return getIDFromPath(PATH, i-1);
+            return getIDFromPath(PATH, i - 1);
         } else if (returnVal == localID) {
             return getIDFromPath(PATH, i - 1);
         } else {
@@ -538,13 +575,14 @@ int getLastInPath(string PATH) {
     }
 }
 
-void putToMailbox(string message, int toWho){
+void putToMailbox(string message, int toWho) {
     vector<int> toPass;
     toPass.push_back(toWho);
     putToMailbox(message, toPass);
 }
-void putToMailbox(string message, vector<int> toWho){
-    mailbox.write(message,toWho);
+
+void putToMailbox(string message, vector<int> toWho) {
+    mailbox.write(message, toWho);
     mailbox.setReadyToRead();
 }
 
@@ -553,7 +591,8 @@ void putToMailbox(string message, vector<int> toWho){
  */
 void queueSendingReceived(string messageID, int senderID) {
     string messageToSend = "RECEIVED ";
-    messageToSend.append(to_string(generateMessageID())).append(" ").append(to_string(localID)).append(" ").append(to_string(senderID)).append(" ");
+    messageToSend.append(to_string(generateMessageID())).append(" ").append(to_string(localID)).append(" ").append(
+            to_string(senderID)).append(" ");
     messageToSend.append(messageID);
     //TODO: Create counterpart listener in SENDING part of app
 
@@ -592,11 +631,10 @@ int getIDFromPath(string PATH, int position) {
 //region PART INPUT
 
 /**
- * Má na starosti obsluhu uživatelského inputu
+ * Serves user-input related stuff
  */
 void partInput() {
-    while(mailbox.shouldRun()) {
-        //TODO: COMPLETE
+    while (mailbox.shouldRun()) {
         string toWhom;
         string text;
         cout << "Enter id of client or END for exit: ";
@@ -604,8 +642,8 @@ void partInput() {
         if (toWhom == "END") {
             //ENDING APP
             mailbox.shouldStop();
-            cerr << "Terminating app!" << endl;
-        } else if (!isInteger(toWhom) || atoi(toWhom.c_str()) <= 0){
+
+        } else if (!isInteger(toWhom) || atoi(toWhom.c_str()) <= 0) {
             cerr << "You haven't entered valid ID" << endl;
         } else {
             //Okay it seems valid
@@ -637,7 +675,8 @@ void queueSendMessage(int toWho, string text) {
     for (int i = 0; i < connectionCount; ++i) {
         neighbours.push_back(connections[i].id);
     }
-    
+
+
     mailbox.write(message, neighbours);
     mailbox.setReadyToRead();
 }
@@ -662,8 +701,8 @@ int generateMessageID() {
     return (int) currTime;
 }
 
-int main(int argc, char * argv[]) {
-    if (argc!=3) {
+int main(int argc, char *argv[]) {
+    if (argc != 3) {
         cerr << "Wrong number of arguments! \nUsage: " << argv[0] << " <ID> <cfg file>" << endl;
         cerr << "Launching in testing mode..." << endl;
         testing();
@@ -715,7 +754,7 @@ int main(int argc, char * argv[]) {
 
     //Bind socket to port:
     if (bind(
-            servSockFD, (struct sockaddr * ) &serv_addr, sizeof(serv_addr)) < 0) {
+            servSockFD, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
         cerr << "Unable to bind socket to port!" << endl;
         exit(-1);
     }
@@ -728,7 +767,7 @@ int main(int argc, char * argv[]) {
 
     //Bind socket to port:
     if (bind(
-            cliSockFD, (struct sockaddr * ) &cli_addr, sizeof(cli_addr)) < 0) {
+            cliSockFD, (struct sockaddr *) &cli_addr, sizeof(cli_addr)) < 0) {
         cerr << "Unable to bind socket to port!" << endl;
         exit(-1);
     }
@@ -753,9 +792,12 @@ int main(int argc, char * argv[]) {
 
     //Now join everything:
     input.join();
-    receive.join();
     send.join();
+    receive.join();
     cout << "Application succesfully stopped all threads" << endl;
+    close(servSockFD);
+    close(cliSockFD);
+    return 0;
 }
 
 void testing() {
@@ -777,10 +819,10 @@ void testing() {
 }
 
 bool isInteger(const std::string &s) {
-    if(s.empty() || ((!isdigit(s[0])) && (s[0] != '-') && (s[0] != '+'))) return false ;
+    if (s.empty() || ((!isdigit(s[0])) && (s[0] != '-') && (s[0] != '+'))) return false;
 
-    char * p ;
-    strtol(s.c_str(), &p, 10) ;
+    char *p;
+    strtol(s.c_str(), &p, 10);
 
-    return (*p == 0) ;
+    return (*p == 0);
 }
