@@ -27,6 +27,11 @@
  * RECEIVED messag looks like:
  *      Header: <RECEIVED> <Reply's ID> <this node's ID> <to whom this RECEIVED was sent> <ID of original message>
  *
+ * DELIVERED_BROKENT message looks like:
+ *      Header: <DELIVERED_BROKEN> <generatedID> <this node's ID> <to whom this meessage should go> <ID of original message>
+ *
+ * MSG message looks like:
+ *      Header <MSG> <generatedID> <this node's ID> <TARGET>
  */
 
 #include <iostream>
@@ -48,6 +53,7 @@
 #include <cstring>
 #include <map>
 #include <sstream>
+#include <algorithm>
 
 /**
  * Message to some TARGET
@@ -135,10 +141,16 @@ private:
     vector<int> toWho;
     bool readyToRead;
     bool readyToWrite;
+    bool shouldBeRunning;
+
 public:
     Dataholder(void) {
         readyToRead = false;
         readyToWrite = true;
+        shouldBeRunning = true;
+    }
+    bool shouldRun() {
+        return shouldBeRunning;
     }
     bool isReadyToRead() {
         return readyToRead;
@@ -155,6 +167,12 @@ public:
          readyToRead = true;
         readyToWrite = false;
         cv.notify_one();
+    }
+    /**
+     * This is used for stopping the whole app...
+     */
+    void shouldStop() {
+     shouldBeRunning = false;
     }
     string read_message() {
         unique_lock<mutex> lk(m);
@@ -198,6 +216,8 @@ public:
 
 void testing();
 
+inline bool isInteger(const std::string & s);
+
 int generateMessageID();
 
 void putToMailbox(string message, int toWho);
@@ -224,6 +244,21 @@ void waitingForReceived(int targetID, string PATH, string messageID, int type);
 
 void gotDelivered(string ID);
 
+void gotUnreachable(string ID);
+
+int removeTimer(string ID);
+
+void passBroken(string header[5]);
+
+/**
+ * This function resends message.
+ */
+void passMessage(string header[5], string text) ;
+
+void queueSendMessage(int toWhom, string text);
+
+void waitingForDelivered(int id, int toWhom);
+
 Dataholder mailbox;
 
 
@@ -236,7 +271,11 @@ Dataholder mailbox;
  * Má na starosti odesílání message
  */
 void partSend() {
+    while(mailbox.shouldRun()) {
 
+
+
+    }
 }
 
 // endregion
@@ -248,7 +287,7 @@ void partSend() {
  */
 void partReceive() {
     char buffer[MAX_MESSAGE_LEN];
-    while(1) {
+    while(mailbox.shouldRun()) {
         bzero(&buffer, MAX_MESSAGE_LEN);
         sockaddr_in newAddr;
         bzero(&newAddr, sizeof(newAddr));
@@ -303,37 +342,13 @@ void parseMessage(string message) {
                 //Send back DELIVERED
                 queueSendingDelivered(header[HEADER_PATH], header[HEADER_ID]);
             } else {
-                //This message was not for me... Hubbing it
-                //Adding my ID to its PATH:
-                header[HEADER_PATH] = addMyIDToPath(header[HEADER_PATH]);
-
-                vector<int> toWho;
-                cout << "ConnectionCount=" << connectionCount << endl;
-                for (int i = 0; i < connectionCount; ++i) {
-
-                    if (atoi(header[HEADER_TARGET]) == connections[i].id) {
-                        //It is for my neighbour!!!
-                        toWho.clear();
-                        toWho.push_back(connections[i].id);
-                        waitingForReceived(connections[i].id, header[HEADER_PATH], header[HEADER_ID], atoi(header[HEADER_TYPE]));
-                        break;
-                    }
-
-                    if (!isInPath(connections[i].id, header[HEADER_PATH])) {
-                        //Fill string of messages:
-                        toWho.push_back(connections[i].id);
-                    }
-                }
-                //ToWho filled
-
-                queueResendingMessage(text, toWho, header);
+                passMessage(header, text);
             }
 
             //Should be finished...
             break;
     }
         case DELIVERED: {
-
             queueSendingDelivered(header[HEADER_PATH], header[HEADER_ID]);
             if (atoi(header[HEADER_TARGET].c_str()) == localID) {
                 //Was for me...
@@ -342,6 +357,24 @@ void parseMessage(string message) {
             break;
         }
         case DELIVERED_BROKEN: {
+            if (atoi(header[HEADER_TARGET].c_str()) == localID) {
+                //This was for me!
+                gotDelivered(header[HEADER_OPTIONAL]);
+            } else {
+                //Resend it like a normal message
+                passMessage(header, "");
+            }
+            break;
+        }
+
+        case UNREACHABLE_BROKEN: {
+            if (atoi(header[HEADER_TARGET].c_str()) == localID) {
+                //This was for me!
+                gotUnreachable(header[HEADER_OPTIONAL]);
+            } else {
+                //Resend it like a normal message
+                passMessage(header, "");
+            }
 
             break;
         }
@@ -351,10 +384,7 @@ void parseMessage(string message) {
             break;
         }
 
-        case UNREACHABLE_BROKEN: {
 
-            break;
-        }
 
         case RECEIVED: {
 
@@ -370,9 +400,50 @@ void parseMessage(string message) {
 }
 
 /**
+ * This function resends messages
+ */
+void passMessage(string header[5], string text) {
+    header[HEADER_PATH] = addMyIDToPath(header[HEADER_PATH]);
+
+    vector<int> toWho;
+    for (int i = 0; i < connectionCount; ++i) {
+        if (atoi(header[HEADER_TARGET].c_str()) == connections[i].id) {
+            //It is for my neighbour!!!
+            toWho.clear();
+            toWho.push_back(connections[i].id);
+            waitingForReceived(connections[i].id, header[HEADER_PATH], header[HEADER_ID], atoi(header[HEADER_TYPE].c_str()));
+            break;
+        }
+
+        if (!isInPath(connections[i].id, header[HEADER_PATH])) {
+            //Fill string of messages:
+            toWho.push_back(connections[i].id);
+        }
+    }
+    //ToWho filled
+
+    queueResendingMessage("", toWho, header);
+}
+
+/**
+ * Remove timer on TIMEOUT
+ */
+void gotUnreachable(string ID) {
+    int who = removeTimer(ID);
+    cerr << "Target: " << who << " was unreachable.." << endl;
+}
+
+/**
  * This function removes the timer on TIEOUT, because DELIVERED message invoked by message with <ID> had arrived
  */
 void gotDelivered(string ID) {
+    removeTimer(ID);
+}
+
+/**
+ * Removes the timer and returns the ID of node it was sent to.
+ */
+int removeTimer(string ID) {
     //TODO: REMOVE THE TIMER (No idea how to implement this)
 }
 
@@ -524,10 +595,63 @@ int getIDFromPath(string PATH, int position) {
  * Má na starosti obsluhu uživatelského inputu
  */
 void partInput() {
-    //TODO: COMPLETE
+    while(mailbox.shouldRun()) {
+        //TODO: COMPLETE
+        string toWhom;
+        string text;
+        cout << "Enter id of client or END for exit: ";
+        cin >> toWhom;
+        if (toWhom == "END") {
+            //ENDING APP
+            mailbox.shouldStop();
+            cerr << "Terminating app!" << endl;
+        } else if (!isInteger(toWhom) || atoi(toWhom.c_str()) <= 0){
+            cerr << "You haven't entered valid ID" << endl;
+        } else {
+            //Okay it seems valid
+            cout << "Enter text to send to " << toWhom << endl;
+            cin.ignore(numeric_limits<streamsize>::max(), '\n');
+            getline(cin, text);
+            if (text == "") {
+                cerr << "Text is empty! wont send it!" << endl;
+            } else {
+                //Send it:
+                queueSendMessage(atoi(toWhom.c_str()), string(text));
+            }
+        }
+    }
+}
+
+/**
+ * This function queues message for sending and it registers timer to look for DELIVERED
+ */
+void queueSendMessage(int toWho, string text) {
+    string message = "MSG ";
+    int id = generateMessageID();
+    waitingForDelivered(id, toWho);
+    message.append(to_string(id)).append(" ").append(to_string(localID)).append(" ");
+    message.append(to_string(toWho)).append(" \n");
+    message.append(text);
+
+    vector<int> neighbours;
+    for (int i = 0; i < connectionCount; ++i) {
+        neighbours.push_back(connections[i].id);
+    }
+    
+    mailbox.write(message, neighbours);
+    mailbox.setReadyToRead();
+}
+
+/**
+ * This function registeres WAIT for DELIVERED message
+ */
+void waitingForDelivered(int id, int toWhom) {
+    //TODO: Register the wait and write down the id->toWhom relation (I have no idea how to implement the wait)
 }
 
 //endregion
+
+
 
 
 int generateMessageID() {
@@ -628,20 +752,35 @@ int main(int argc, char * argv[]) {
     cout << "Application successfully created all threads" << endl;
 
     //Now join everything:
-    send.join();
-    receive.join();
     input.join();
+    receive.join();
+    send.join();
     cout << "Application succesfully stopped all threads" << endl;
 }
 
 void testing() {
     //TODO: Insert tests here!
+
+
+
     connectionCount = 100;
     localID = 1;
     parseRouteConfiguration("routing.cfg", localID, &localPort, &connectionCount, connections);
 
-    string message = to_string(MSG);
-    message.append(" 2111 2;3 6\nAhoj já jsem týpek!");
-    cout << "\n---------\nMessage was: \n" << message << "\n-----" << endl;
-    parseMessage(message);
+    partInput();
+
+//
+//    string message = to_string(DELIVERED_BROKEN);
+//    message.append(" 2111 2;3 6\nAhoj já jsem týpek!");
+//    cout << "\n---------\nMessage was: \n" << message << "\n-----" << endl;
+//    parseMessage(message);
+}
+
+bool isInteger(const std::string &s) {
+    if(s.empty() || ((!isdigit(s[0])) && (s[0] != '-') && (s[0] != '+'))) return false ;
+
+    char * p ;
+    strtol(s.c_str(), &p, 10) ;
+
+    return (*p == 0) ;
 }
