@@ -43,7 +43,7 @@
  *      $6 -> If it is to send a message {'DELIVERED_BROKEN', 'UNREACHABLE_BROKEN'}
  *  DELIVERED MESSAGE:
  *      looks like:
- *      H_TYPE H_ID H_PATH H_TARGET
+ *      H_TYPE H_ID H_PATH H_TARGET ID_of_originalMessage
  *      H_PATH is the path of the original Message
  *      H_TARGET is the original sender.
  *      So While creating DELIVERED message just change H_TARGET

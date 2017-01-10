@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.6)
 project(D)
-
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -lpthread -std=c++11 ")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+set(CMAKE_EXE_LINKER_FLAGS  "${CMAKE_EXE_LINKER_FLAGS} -lpthread" )
 
 set(SOURCE_FILES client.cpp route_cfg_parser.h route_cfg_parser.c)
 add_executable(D ${SOURCE_FILES})

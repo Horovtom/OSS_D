@@ -2,6 +2,17 @@
 // Created by lactosis on 9.1.17.
 //
 
+/**
+ * DELIVERED message looks like:
+ *
+ *      Header: <DELIVERED> <Reply's ID> <original message PATH> <to whom this DELIVERED should go>
+ *      text: <ID of original message>
+ *
+ * RECEIVED messag looks like:
+ *      Header: <RECEIVED> <Reply's ID> <this node's ID> <to whom this RECEIVED was sent>
+ *      text: <ID of original message>
+ */
+
 #include <iostream>
 #include <thread>
 #include <mutex>
@@ -20,6 +31,7 @@
 #include <time.h>
 #include <cstring>
 #include <map>
+#include <sstream>
 
 /**
  * Message to some TARGET
@@ -66,6 +78,12 @@
  */
 #define HEADER_TARGET 3
 /**
+ * This header argument is optional.. Is used with return-type messages to fill in the old-message ID
+ */
+#define HEADER_OPTIONAL 4
+
+
+/**
  * This is number of port from which will the application send messages to the outside world
  */
 #define SENDING_PORT 19976
@@ -75,7 +93,7 @@ using namespace std;
 /**
  * This variable stores all the IDs of messages that went through this node.
  */
-std::vector<int> listOfMessages;
+std::vector<long> listOfMessages;
 int localID;
 int localPort;
 
@@ -98,6 +116,7 @@ condition_variable cv2;
 class Dataholder{
 private:
     string message;
+    vector<int> toWho;
     bool readyToRead;
     bool readyToWrite;
 public:
@@ -117,12 +136,11 @@ public:
         cv2.notify_one();
     }
     void setReadyToRead() {
-
-        readyToRead = true;
+         readyToRead = true;
         readyToWrite = false;
         cv.notify_one();
     }
-    string read() {
+    string read_message() {
         unique_lock<mutex> lk(m);
         cv.wait(lk, [&]{return isReadyToRead();});
 
@@ -133,13 +151,30 @@ public:
             return message;
         }
     }
-    void write(string toWrite) {
+    vector<int> read_toWho() {
+        unique_lock<mutex> lk(m);
+        cv.wait(lk, [&]{return isReadyToRead();});
+
+        if (!readyToRead) {
+            cerr << "Somebody is trying to read, when he does not have the right to do so!" << endl;
+            vector<int> empty;
+            return empty;
+        } else {
+            return toWho;
+        }
+    }
+    void write(string text, vector<int> recipients) {
         unique_lock<mutex> lk(m);
         cv2.wait(lk, [&]{return isReadyToWrite();});
         if (!readyToWrite) {
             cerr << "Somebody is trying to write when he does not have the right to!" << endl;
         } else {
-            message = toWrite;
+            //Tady je díra... mělo by to tam být hned...
+            readyToWrite = false;
+            readyToRead = false;
+            message = text;
+            //Tohle by mělo samo dělat copy()
+            toWho = recipients;
         }
 
     }
@@ -147,11 +182,27 @@ public:
 
 void testing();
 
+int generateMessageID();
+
+void putToMailbox(string message, int toWho);
+
+void putToMailbox(string message, vector<int> toWho);
+
 void parseMessage(string message);
 
 int getIDFromPath(string messageID, int senderID);
 
 void queueSendingReceived(string messageID, int senderID);
+
+void queueSendingDelivered(string PATH, string ID_ofOriginal);
+
+string addMyIDToPath(string PATH);
+
+bool isInPath(int id, string PATH);
+
+int getLastInPath(string PATH);
+
+void queueResendingMessage(string text, vector<int> toWho, string Header[5]);
 
 Dataholder mailbox;
 
@@ -165,10 +216,7 @@ Dataholder mailbox;
  * Má na starosti odesílání message
  */
 void partSend() {
-    cout << mailbox.read() << endl;
-    mailbox.setReadyToWrite();
-    cout << mailbox.read() << endl;
-    mailbox.setReadyToWrite();
+
 }
 
 // endregion
@@ -195,101 +243,189 @@ void partReceive() {
 }
 
 void parseMessage(string message) {
-    string header[4];
+    string header[5];
     string text;
+
+    std::istringstream stream(message);
+    string headerLine;
+    getline(stream, headerLine);
     int currChar = 0;
-    for (int i = 0; i < 4; ++i) {
-        while (message[currChar] != ' ') {
-            header[i].push_back(message[currChar]);
+    for (int k = 0; k < 5; ++k) {
+        while(currChar < headerLine.length() && message[currChar] != ' ') {
+            header[k].push_back(message[currChar]);
             currChar++;
         }
+        currChar++;
     }
-    while (message[currChar] == ' ') currChar++;
-    while (currChar < message.length()) text.push_back(message[currChar]);
+    string currLine;
+    while(getline(stream, currLine)) {
+        text.append(currLine);
+    }
+
+
     //Loaded:
 
     //If this message had already been here
     for (int j = 0; j < listOfMessages.size(); ++j) {
-        if (listOfMessages[j] == atoi(header[HEADER_ID].c_str()) && atoi(header[HEADER_TYPE]) != RECEIVED) return;
+        if (listOfMessages[j] == atol(header[HEADER_ID].c_str()) && atoi(header[HEADER_TYPE].c_str()) != RECEIVED) return;
     }
     //Add it to the list of messages
-    listOfMessages.push_back(atoi(header[HEADER_ID].c_str()));
+    listOfMessages.push_back(atol(header[HEADER_ID].c_str()));
 
     switch (atoi(header[HEADER_TYPE].c_str())) {
-        case MSG:
+        case MSG: {
             //TODO: Probably need something to wait for received messages and throw panic if it doesnt come in time
             int from = getIDFromPath(header[HEADER_PATH], 0);
             queueSendingReceived(header[HEADER_ID], from);
             if (atoi(header[HEADER_TARGET].c_str()) == localID) {
                 //This message was for me... Print it to cout
                 cout << "Message from: " << from << endl;
-                cout << text;
+                cout << text << endl;
+                cout << "-------------\n" << endl;
                 //Send back DELIVERED
-
-                queueSendingDelivered()
+                queueSendingDelivered(header[HEADER_PATH], header[HEADER_ID]);
             } else {
                 //This message was not for me... Hubbing it
                 //Adding my ID to its PATH:
                 header[HEADER_PATH] = addMyIDToPath(header[HEADER_PATH]);
 
-                string index = "";
+                vector<int> toWho;
                 for (int i = 0; i < connectionCount; ++i) {
                     if (!isInPath(connections[i].id, header[HEADER_PATH])) {
                         //Fill string of messages:
-                        index.append(to_string(i)).append(";");
+                        toWho.push_back(connections[i].id);
                     }
                 }
-                //  We sent a string which looks like this:
-                //  1;4;23;15;
-                tellSEND(index);
+                //ToWho filled
 
-                string newDocument = "";
-                newDocument.append(header[HEADER_TYPE]).append(" ").append(header[HEADER_ID]).append(" ").
-                        append(header[HEADER_PATH]).append(" ").append(header[HEADER_TARGET]).append(" ");
-                newDocument.append(text);
-                tellSEND(newDocument);
+                queueResendingMessage(text, toWho, header);
             }
 
             //Should be finished...
             break;
-        case DELIVERED:
-            queueSendingReceived();
+    }
+        case DELIVERED: {
+
+            queueSendingDelivered(header[HEADER_PATH], header[HEADER_ID]);
             if (atoi(header[HEADER_TARGET].c_str()) == localID) {
                 //Was for me...
-                string message = "DELIVERED ";
-                message.append(to_string())
+                //TODO: DOSTUFF
 
-                tellSEND();
 
             }
             break;
-        case DELIVERED_BROKEN:
-            queueSendingReceived();
-            break;
-        case UNREACHABLE:
+        }
+        case DELIVERED_BROKEN: {
 
             break;
-        case UNREACHABLE_BROKEN:
-            queueSendingReceived();
-            break;
-        case RECEIVED:
+        }
+
+        case UNREACHABLE:{
 
             break;
-        default:
+        }
+
+        case UNREACHABLE_BROKEN: {
+
+            break;
+        }
+
+        case RECEIVED: {
+
+            break;
+        }
+
+        default: {
+
             cerr << "Header type not recognised!" << endl;
             //TODO: DO SOMETHING
+        }
     }
 }
 
 /**
- * Tells SENDING part of the app to send RECEIVED message to the sender
+ * Tells SENDING part of the app to forward message to toWho list.
+ */
+void queueResendingMessage(string text, vector<int> toWho, string Header[5]) {
+    string newMessage = "";
+    for (int i = 0; i < 5; ++i) {
+        newMessage.append(Header[i]).append(" ");
+    }
+    newMessage.push_back('\n');
+    newMessage.append(text);
+
+    putToMailbox(newMessage, toWho);
+}
+
+bool isInPath(int id, string PATH) {
+    int i = 0;
+    while(i < 1000) {
+        int currID = getIDFromPath(PATH, i);
+        if (currID < 0) {
+            return false;
+        } else if (id == currID) {
+            return true;
+        }
+        i++;
+    }
+    cerr << "isInPath was looping for way too long! Check it out!" << endl;
+    return false;
+}
+
+string addMyIDToPath(string PATH) {
+        return PATH.append(";").append(to_string(localID));
+}
+
+/**
+ * Tells SENDING part of the app to send Delivered message to the sender (target)
+ */
+void queueSendingDelivered(string PATH, string ID_ofOriginal) {
+    int from = getIDFromPath(PATH, 0);
+    string messageToSend = "DELIVERED ";
+    messageToSend.append(to_string(generateMessageID())).append(" ").append(PATH).append(" ").append(to_string(from));
+    messageToSend.append(" ").append(ID_ofOriginal);
+
+    int to = getLastInPath(PATH);
+    putToMailbox(messageToSend, to);
+}
+
+/**
+ * Gets the last ID of node before this node.
+ */
+int getLastInPath(string PATH) {
+    int i = 0;
+    while(1) {
+        int returnVal = getIDFromPath(PATH, i);
+        if (returnVal == -1) {
+            return getIDFromPath(PATH, i-1);
+        } else if (returnVal == localID) {
+            return getIDFromPath(PATH, i - 1);
+        } else {
+            i++;
+        }
+    }
+}
+
+void putToMailbox(string message, int toWho){
+    vector<int> toPass;
+    toPass.push_back(toWho);
+    putToMailbox(message, toPass);
+}
+void putToMailbox(string message, vector<int> toWho){
+    mailbox.write(message,toWho);
+    mailbox.setReadyToRead();
+}
+
+/**
+ * Tells SENDING part of the app to send RECEIVED message to the sender (neighbour)
  */
 void queueSendingReceived(string messageID, int senderID) {
     string messageToSend = "RECEIVED ";
-    messageToSend.append(messageID).append(" ")
-            .append(to_string(localID)).append(" ")
-                    .append(to_string(senderID));
+    messageToSend.append(to_string(generateMessageID())).append(" ").append(to_string(localID)).append(" ").append(to_string(senderID)).append(" ");
+    messageToSend.append(messageID);
     //TODO: Create counterpart listener in SENDING part of app
+
+    putToMailbox(messageToSend, senderID);
 }
 
 /**
@@ -327,12 +463,19 @@ int getIDFromPath(string PATH, int position) {
  * Má na starosti obsluhu uživatelského inputu
  */
 void partInput() {
-    mailbox.write("Ahoj, já jsem INPUT");
-    mailbox.setReadyToRead();
+    //TODO: COMPLETE
 }
 
 //endregion
 
+
+int generateMessageID() {
+    time_t currTime;
+    time(&currTime);
+
+    //Make this more complex maybe
+    return (int) currTime;
+}
 
 int main(int argc, char * argv[]) {
     if (argc!=3) {
@@ -432,11 +575,9 @@ int main(int argc, char * argv[]) {
 
 void testing() {
     //TODO: Insert tests here!
-    string message;
-    char idiot[20];
-
-    cin >> idiot;
-    cout << "Idiot: " << idiot << endl;
-    message = idiot;
-    cout << "message: " << message << endl;
+    string message = to_string(MSG);
+    message.append(" 2111 2;3 1\nAhoj já jsem týpek!");
+    cout << "Message was: \n" << message << endl;
+    localID = 1;
+    parseMessage(message);
 }
