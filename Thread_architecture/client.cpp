@@ -293,7 +293,7 @@ void testing();
 
 inline bool isInteger(const std::string &s);
 
-int generateMessageID();
+int generateMessageID(int messageType);
 
 void putToMailbox(string message, int toWho);
 
@@ -359,15 +359,11 @@ void partSend() {
             break;
         }
 
+
         for (int i = 0; i < toWho.size(); ++i) {
-            //TODO: TeSTING
-//            cout << "Sending message to : " << toWho[i] << endl;
             int result = (int) sendto(cliSockFD, message.c_str(), message.length(), 0,
                                       (struct sockaddr *) &neighbours[toWho[i]], sizeof(neighbours[toWho[i]]));
-            //TODO: TESTING
-//            cout << "Sending message returned: " << result << endl;
         }
-
     }
     cerr << "Terminate SEND" << endl;
 }
@@ -447,7 +443,7 @@ void parseMessage(string message) {
         case MSG: {
             if (atoi(header[HEADER_TARGET].c_str()) == localID) {
                 //This message was for me... Print it to cout and send received
-                int from = getIDFromPath(header[HEADER_PATH], 0);
+                int from = getLastInPath(header[HEADER_PATH]);
                 queueSendingReceived(header[HEADER_ID], from);
 
                 printMessage(from, text);
@@ -461,7 +457,6 @@ void parseMessage(string message) {
             break;
         }
         case DELIVERED: {
-            queueSendingDelivered(header[HEADER_PATH], header[HEADER_ID]);
             if (atoi(header[HEADER_TARGET].c_str()) == localID) {
                 //Was for me...
                 gotDelivered(header[HEADER_OPTIONAL]);
@@ -505,6 +500,7 @@ void parseMessage(string message) {
 
 
         case RECEIVED: {
+            cout << "\n--I got a RECEIVED message" << endl;
             receivedArrived(atoi(header[HEADER_ID].c_str()));
             break;
         }
@@ -540,7 +536,7 @@ void backTrackMessage(string header[5]) {
     vector<int> toWho;
     toWho.push_back(next);
     string message;
-    for (int i = 0; i < header->length(); ++i) {
+    for (int i = 0; i < 5; ++i) {
         message.append(header[i]).append(" ");
     }
     message.append("\n");
@@ -586,6 +582,7 @@ void gotUnreachable(string ID) {
  */
 void gotDelivered(string ID) {
     removeTimer(ID);
+    cout << "\n--DELIVERED" << endl;
 }
 
 /**
@@ -639,7 +636,6 @@ bool isInPath(int id, string PATH) {
         if (currID < 0) {
             return false;
         } else if (id == currID) {
-            cout << "Found it!" << endl;
             return true;
         }
         i++;
@@ -658,8 +654,9 @@ string addMyIDToPath(string PATH) {
 void queueSendingDelivered(string PATH, string ID_ofOriginal) {
     int from = getIDFromPath(PATH, 0);
     string messageToSend = to_string(DELIVERED);
-    messageToSend.append(" ").append(to_string(generateMessageID())).append(" ")
+    messageToSend.append(" ").append(to_string(generateMessageID(DELIVERED))).append(" ")
             .append(PATH).append(" ").append(to_string(from)).append(" ").append(ID_ofOriginal);
+    messageToSend.append(" \n").append(to_string(localID)).append(" got your message and is replying to you with a DELIVERED message...");
 
     int to = getLastInPath(PATH);
     putToMailbox(messageToSend, to);
@@ -698,9 +695,9 @@ void putToMailbox(string message, vector<int> toWho) {
  */
 void queueSendingReceived(string messageID, int senderID) {
     string messageToSend = to_string(RECEIVED);
-    messageToSend.append(" ").append(to_string(generateMessageID())).append(" ").append(to_string(localID))
+    messageToSend.append(" ").append(to_string(generateMessageID(RECEIVED))).append(" ").append(to_string(localID))
             .append(" ").append(to_string(senderID)).append(" ").append(messageID);
-
+    messageToSend.append("\n").append(to_string(localID)).append(" had received your message! :)");
     putToMailbox(messageToSend, senderID);
 }
 
@@ -743,7 +740,7 @@ void partInput() {
     while (mailbox.shouldRun()) {
         string toWhom;
         string text;
-        cout << "Enter id of client or END for exit: ";
+        cout <<  "(" << localID << ") " << "Enter id of client or END for exit: ";
         cin >> toWhom;
         if (toWhom == "END") {
             //ENDING APP
@@ -771,16 +768,22 @@ void partInput() {
  * This function queues message for sending and it registers timer to look for DELIVERED
  */
 void queueSendMessage(int toWho, string text) {
-    string message = "MSG ";
-    int id = generateMessageID();
+    string message = to_string(MSG);
+    int id = generateMessageID(MSG);
     waitingForDelivered(id, toWho);
-    message.append(to_string(id)).append(" ").append(to_string(localID)).append(" ");
+    message.append(" ").append(to_string(id)).append(" ").append(to_string(localID)).append(" ");
     message.append(to_string(toWho)).append(" \n");
     message.append(text);
 
     vector<int> neighbours;
     for (int i = 0; i < connectionCount; ++i) {
-        neighbours.push_back(connections[i].id);
+        if (connections[i].id == toWho) {
+            neighbours.clear();
+            neighbours.push_back(toWho);
+            break;
+        } else {
+            neighbours.push_back(connections[i].id);
+        }
     }
 
 
@@ -800,12 +803,12 @@ void waitingForDelivered(int id, int toWhom) {
 
 
 
-int generateMessageID() {
+int generateMessageID(int messageType) {
     time_t currTime;
     time(&currTime);
 
     //Make this more complex maybe
-    return (int) currTime;
+    return (int) ((currTime + messageType * 13) / localID);
 }
 
 int main(int argc, char *argv[]) {
