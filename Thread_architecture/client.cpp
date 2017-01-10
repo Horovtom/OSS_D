@@ -20,14 +20,13 @@
  *  If they do not make it to the original sender in time, he throws target_unreachable back at the user.
  *
  *
- * DELIVERED message looks like:
- *
+ * DELIVERED/UNREACHABLE message looks like:
  *      Header: <DELIVERED> <Reply's ID> <original message PATH> <to whom this DELIVERED should go> <ID of original message>
  *
  * RECEIVED messag looks like:
  *      Header: <RECEIVED> <Reply's ID> <this node's ID> <to whom this RECEIVED was sent> <ID of original message>
  *
- * DELIVERED_BROKENT message looks like:
+ * BROKEN message looks like:
  *      Header: <DELIVERED_BROKEN> <generatedID> <this node's ID> <to whom this meessage should go> <ID of original message>
  *
  * MSG message looks like:
@@ -299,8 +298,15 @@ void partSend() {
         if (message == "" || toWho.size() == 0) {
             break;
         }
-        //TODO:COMPLETE SEND
-        
+
+        for (int i = 0; i < toWho.size(); ++i) {
+            //TODO: TeSTING
+            //cout << "Sending message to : " << toWho[i] << endl;
+            int result = (int) sendto(cliSockFD, message.c_str(), message.length(), 0, (struct sockaddr *) &neighbours[toWho[i]], sizeof(neighbours[toWho[i]]));
+            //TODO: TESTING
+            //cout << "Sending message returned: " << result << endl;
+        }
+
     }
     cerr << "Terminate SEND" << endl;
 }
