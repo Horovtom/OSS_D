@@ -221,6 +221,8 @@ int getLastInPath(string PATH);
 
 void queueResendingMessage(string text, vector<int> toWho, string Header[5]);
 
+void waitingForReceived(int targetID, string PATH, string messageID, int type);
+
 Dataholder mailbox;
 
 
@@ -290,7 +292,6 @@ void parseMessage(string message) {
     listOfMessages.push_back(atol(header[HEADER_ID].c_str()));
     switch (atoi(header[HEADER_TYPE].c_str())) {
         case MSG: {
-            //TODO: Probably need something to wait for received messages and throw panic if it doesnt come in time
             if (atoi(header[HEADER_TARGET].c_str()) == localID) {
                 //This message was for me... Print it to cout and send received
                 int from = getIDFromPath(header[HEADER_PATH], 0);
@@ -308,6 +309,15 @@ void parseMessage(string message) {
                 vector<int> toWho;
                 cout << "ConnectionCount=" << connectionCount << endl;
                 for (int i = 0; i < connectionCount; ++i) {
+
+                    if (atoi(header[HEADER_TARGET]) == connections[i].id) {
+                        //It is for my neighbour!!!
+                        toWho.clear();
+                        toWho.push_back(connections[i].id);
+                        waitingForReceived(connections[i].id, header[HEADER_PATH], header[HEADER_ID], atoi(header[HEADER_TYPE]));
+                        break;
+                    }
+
                     if (!isInPath(connections[i].id, header[HEADER_PATH])) {
                         //Fill string of messages:
                         toWho.push_back(connections[i].id);
@@ -357,6 +367,32 @@ void parseMessage(string message) {
             //TODO: DO SOMETHING
         }
     }
+}
+
+/**
+ * Queues the wait for RECEIVED message...
+ * @param targetID the ID of node from which the RECEIVED should come
+ * @param PATH is the path the message had taken previously
+ * @param messageID
+ * @param type of message that it was
+ */
+void waitingForReceived(int targetID, string PATH, string messageID, int type) {
+    //TODO: DoStuff with this (I have no idea how to time this...)
+
+    if (type == MSG) {
+        //If this does not come, send UNREACAHBLE back by PATH
+
+    } else {
+
+        if (type == UNREACHABLE || type == DELIVERED) {
+            //If this does not come, send UNREACHABLE_BROKEN/DELIVERED_BROKEN
+
+        } else {
+            cerr<<"I don't know which type this is:" << type << endl;
+            return;
+        }
+    }
+
 }
 
 /**
