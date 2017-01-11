@@ -111,6 +111,7 @@
 
 //endregion
 
+
 /**
  * Message to some TARGET
  */
@@ -136,8 +137,6 @@
  */
 #define UNREACHABLE_BROKEN 5
 #define MAX_MESSAGE_LEN 1024
-#define READ_END 0
-#define WRITE_END 1
 /**
  * Index of word in header that specifies TYPE of message...
  * e.g. RECIEVED, DELIVERED, MSG etc.
@@ -159,8 +158,6 @@
  * This header argument is optional.. Is used with return-type messages to fill in the old-message ID
  */
 #define HEADER_OPTIONAL 4
-
-
 /**
  * This is number of port from which will the application send messages to the outside world
  */
@@ -186,6 +183,42 @@ int servSockFD, cliSockFD;
 mutex m;
 condition_variable cv;
 condition_variable cv2;
+
+/**
+ * Holds Saved messages and handles timeouts...
+ */
+class SavedMessage {
+private:
+    int timeout;
+    string header[5];
+public:
+    SavedMessage(string header[5], int timeout) {
+        this->timeout = timeout;
+        for (int i = 0; i < 5; ++i) {
+            this->header[i] = header[i];
+        }
+    }
+    SavedMessage(string header[5]) {
+        this->timeout = 5;
+        for (int i = 0; i < 5; ++i) {
+            this->header[i] = header[i];
+        }
+    }
+    bool hasTimedOut() {
+        if (--timeout < 0) {
+            return true;
+        }
+        return false;
+    }
+    string getHeader(int index) {
+        if (index < 0 || index >=5) {
+            cerr << "Index of header was invalid! ";
+            return "";
+        } else {
+            return header[index];
+        }
+    }
+};
 
 /**
  * Class that contains info that is shared among processes
@@ -338,8 +371,11 @@ void printMessage(int from, string text);
 
 void receivedArrived(int ID);
 
+void checkReceived();
+
 Dataholder mailbox;
 
+vector<SavedMessage> savedMessages;
 
 
 // region PART SEND
@@ -393,6 +429,10 @@ void partReceive() {
 //            cout << "I am receiving something!" << endl;
             rect_len = (int) recv(servSockFD, &buffer, MAX_MESSAGE_LEN, 0);
 //            cout << "I ve received " << rect_len << " chars" << endl;
+
+            //Check RECEIVED LIST
+            checkReceived();
+
         }
 
         if (rect_len > 0) {
@@ -401,6 +441,16 @@ void partReceive() {
         }
     }
     cerr << "Terminating RECEIVE" << endl;
+}
+
+
+/**
+ * Check whether any message timed out
+ */
+void checkReceived() {
+    for (int i = 0; i < savedMessages.size(); ++i) {
+        //TODO Finish this
+    }
 }
 
 void parseMessage(string message) {
